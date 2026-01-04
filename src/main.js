@@ -748,6 +748,12 @@ const attachUI = () => {
   el("auto-btn").addEventListener("click", autoPlace);
   el("ready-btn").addEventListener("click", readyUp);
   el("connect-btn").addEventListener("click", () => connect(false));
+  el("code-join-btn").addEventListener("click", () => {
+    el("ws-url").value = el("ws-url").value.trim() || defaultWsUrl();
+    const wsRadio = document.querySelector('input[name="link-mode"][value="ws"]');
+    if (wsRadio) wsRadio.checked = true;
+    connect(false);
+  });
   el("local-demo").addEventListener("click", () => connect(true));
   el("share-btn").addEventListener("click", copyShareLink);
   el("demo-ws").addEventListener("click", () => {
