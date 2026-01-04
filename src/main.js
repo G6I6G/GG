@@ -10,6 +10,10 @@ const FLEET = [
 const el = (id) => document.getElementById(id);
 const randomId = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
 const nowTime = () => new Date().toLocaleTimeString();
+const defaultWsUrl = () => {
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${window.location.host}/ws`;
+};
 
 const createBoard = () => {
   const grid = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(null));
@@ -50,10 +54,11 @@ class BroadcastBridge {
 }
 
 class WebSocketBridge {
-  constructor(url, room, id, onMessage, onStatus) {
+  constructor(url, room, id, onMessage, onStatus, onClose) {
     this.socket = new WebSocket(url);
     this.room = room;
     this.id = id;
+    this.onClose = onClose;
     this.socket.addEventListener("open", () => onStatus("connected-ws"));
     this.socket.addEventListener("message", (event) => {
       try {
@@ -64,8 +69,14 @@ class WebSocketBridge {
         console.warn("Неверный пакет", err);
       }
     });
-    this.socket.addEventListener("close", () => onStatus("closed"));
-    this.socket.addEventListener("error", () => onStatus("closed"));
+    this.socket.addEventListener("close", () => {
+      onStatus("closed");
+      if (this.onClose) this.onClose();
+    });
+    this.socket.addEventListener("error", () => {
+      onStatus("closed");
+      if (this.onClose) this.onClose();
+    });
   }
 
   send(message) {
@@ -117,6 +128,7 @@ class Transport {
     this.clientId = randomId();
     this.bridge = null;
     this.mode = "local";
+    this.lastUrl = "";
   }
 
   connect(room, options = {}) {
@@ -126,10 +138,18 @@ class Transport {
 
     if (this.mode === "ws" && options.url) {
       try {
-        this.bridge = new WebSocketBridge(options.url, room, this.clientId, this.onMessage, this.onStatus);
+        this.lastUrl = options.url;
+        this.bridge = new WebSocketBridge(
+          options.url,
+          room,
+          this.clientId,
+          this.onMessage,
+          this.onStatus,
+          () => this.switchToLocal("ws-closed")
+        );
         setTimeout(() => {
           if (!this.bridge || this.bridge.socket.readyState !== WebSocket.OPEN) {
-            this.switchToLocal();
+            this.switchToLocal("ws-timeout");
           }
         }, 1500);
         return;
@@ -138,10 +158,10 @@ class Transport {
       }
     }
 
-    this.switchToLocal();
+    this.switchToLocal("no-ws");
   }
 
-  switchToLocal() {
+  switchToLocal(reason) {
     this.bridge?.close?.();
     try {
       this.bridge = new BroadcastBridge(this.room, this.clientId, this.onMessage, this.onStatus);
@@ -149,6 +169,9 @@ class Transport {
       this.bridge = new LocalRelayBridge(this.room, this.clientId, this.onMessage, this.onStatus);
     }
     this.mode = "local";
+    if (reason) {
+      this.onStatus(`fallback:${reason}`);
+    }
   }
 
   send(payload) {
@@ -586,13 +609,14 @@ const connect = (localDemo = false) => {
   state.room = el("room-input").value.trim() || "public";
   state.localBot = localDemo;
   const chosenMode = document.querySelector('input[name="link-mode"]:checked')?.value || "local";
-  const wsUrlInput = el("ws-url").value.trim();
+  const wsUrlInput = el("ws-url").value.trim() || defaultWsUrl();
   state.transport = new Transport(onRemoteMessage, (status) => {
     const pill = el("connection-pill");
     if (status === "connected-ws") {
       pill.textContent = "WebSocket";
       pill.classList.remove("offline");
       setStatus("Сервер подключен");
+      log(`Подключение по WebSocket: ${wsUrlInput}`);
     } else if (status === "connected-local") {
       pill.textContent = "Локальный канал";
       pill.classList.remove("offline");
@@ -601,6 +625,11 @@ const connect = (localDemo = false) => {
       pill.textContent = "Локальный (storage)";
       pill.classList.remove("offline");
       setStatus("Локальный мост через localStorage");
+    } else if (status.startsWith("fallback:")) {
+      pill.textContent = "Локальный канал";
+      pill.classList.remove("offline");
+      setStatus("WebSocket недоступен, активирован локальный режим");
+      log("WebSocket недоступен, переключились на локальный режим.", "miss");
     } else {
       pill.textContent = "Оффлайн";
       pill.classList.add("offline");
@@ -651,6 +680,8 @@ const loadSettingsFromUrl = () => {
   }
   if (ws) {
     el("ws-url").value = ws;
+  } else if (!el("ws-url").value) {
+    el("ws-url").value = defaultWsUrl();
   }
   state.autoConnect = auto === "1";
 };
