@@ -11,12 +11,17 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder=".", static_url_path="", template_folder=".")
 
-token = os.environ.get("DISCORD_BOT_TOKEN")
-if not token:
-  raise RuntimeError("DISCORD_BOT_TOKEN не задан. Установите переменную окружения с токеном Discord-бота.")
+_current_token = os.environ.get("DISCORD_BOT_TOKEN") or ""
+bot_service: DiscordBotService | None = None
 
-bot_service = DiscordBotService(token)
-bot_service.start()
+def ensure_service() -> DiscordBotService | None:
+  global bot_service
+  if not _current_token:
+    return None
+  if bot_service is None:
+    bot_service = DiscordBotService(_current_token)
+    bot_service.start()
+  return bot_service
 
 
 @app.route("/")
@@ -27,6 +32,10 @@ def home():
 @app.post("/api/invite")
 def create_invite():
   payload: Dict[str, Any] = request.get_json(force=True) or {}
+
+  service = ensure_service()
+  if service is None:
+    return jsonify({"error": "Токен бота не задан. Обновите ключ через форму настройки."}), 400
 
   try:
     guild_id = int(payload.get("guild_id"))
@@ -46,11 +55,11 @@ def create_invite():
 
   expires_in = max(1, min(expires_in, 240))
 
-  if not bot_service.ready_event.wait(timeout=15):
+  if not service.ready_event.wait(timeout=15):
     return jsonify({"error": "Бот не успел подключиться. Попробуйте ещё раз."}), 503
 
   try:
-    invitation = bot_service.create_invitation_request(
+    invitation = service.create_invitation_request(
       guild_id=guild_id,
       target_user_id=target_user_id,
       channel_name=channel_name,
@@ -68,7 +77,31 @@ def create_invite():
 
 @app.get("/health")
 def health():
-  return {"status": "ok", "bot_ready": bot_service.ready_event.is_set()}
+  service = ensure_service()
+  return {
+    "status": "ok",
+    "bot_ready": bool(service and service.ready_event.is_set()),
+    "token_configured": bool(_current_token),
+  }
+
+
+@app.post("/api/token")
+def update_token():
+  global _current_token, bot_service
+
+  data: Dict[str, Any] = request.get_json(force=True) or {}
+  token = (data.get("token") or "").strip()
+  if not token:
+    return jsonify({"error": "Передайте непустой токен Discord-бота."}), 400
+
+  _current_token = token
+  if bot_service:
+    bot_service.restart_with_token(token)
+  else:
+    bot_service = DiscordBotService(token)
+    bot_service.start()
+
+  return jsonify({"message": "Токен обновлён. Бот перезапускается.", "bot_ready": bot_service.ready_event.is_set()})
 
 
 if __name__ == "__main__":

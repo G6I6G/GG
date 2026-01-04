@@ -2,7 +2,7 @@ import asyncio
 import logging
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
@@ -132,11 +132,41 @@ class DiscordBotService:
     self.thread = threading.Thread(target=self._run_bot, daemon=True)
     self.thread.start()
 
+  def restart_with_token(self, token: str):
+    self.token = token
+    self.stop()
+    self.bot = commands.Bot(command_prefix="!", intents=self.bot.intents)
+    self.bot.event(self.on_ready)
+    self.bot.event(self.on_voice_state_update)
+    self.start()
+
+  def stop(self):
+    if not self.loop:
+      return
+    self.ready_event.clear()
+    try:
+      asyncio.run_coroutine_threadsafe(self._shutdown(), self.loop).result(timeout=15)
+    except Exception:  # noqa: BLE001
+      logger.exception("Ошибка остановки бота")
+    finally:
+      self.loop.call_soon_threadsafe(self.loop.stop)
+      if self.thread:
+        self.thread.join(timeout=10)
+      self.loop = None
+      self.thread = None
+      self.cleanup_task = None
+      self.invites.clear()
+
   def _run_bot(self):
     self.loop = asyncio.new_event_loop()
     asyncio.set_event_loop(self.loop)
     self.loop.create_task(self.bot.start(self.token))
     self.loop.run_forever()
+
+  async def _shutdown(self):
+    if self.cleanup_task:
+      self.cleanup_task.cancel()
+    await self.bot.close()
 
   def create_invitation_request(
     self,
