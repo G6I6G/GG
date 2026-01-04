@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Морской бой · Socket.io</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous" defer></script>
+  <script src="./client.js" type="module" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div>
+      <p class="eyebrow">Реал-тайм</p>
+      <h1>Морской бой</h1>
+      <p class="sub">Node.js + Socket.io. Клиент можно выложить на GitHub Pages, сервер — на Heroku/Vercel.</p>
+    </div>
+    <div class="connection">
+      <label class="input-label">
+        URL сервера
+        <input id="server-url" type="url" placeholder="https://ваш-сервер.example.com" />
+      </label>
+      <div class="connection-row">
+        <button id="connect-btn">Подключиться</button>
+        <button id="new-game-btn" class="ghost">Новая партия</button>
+      </div>
+      <div class="status-line">
+        <span id="connection-dot" class="dot offline"></span>
+        <span id="connection-status">Оффлайн</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Размещение</p>
+          <h2>Ваш флот</h2>
+          <p class="muted">Поставьте корабли (5, 4, 3, 3, 2 клетки). Нажмите «Готов» и дождитесь соперника.</p>
+        </div>
+        <div class="controls">
+          <button id="rotate-btn">Ориентация: Горизонтально</button>
+          <button id="reset-btn" class="ghost">Сбросить</button>
+          <button id="ready-btn" class="primary">Готов</button>
+        </div>
+      </div>
+      <div class="boards">
+        <div class="board-block">
+          <div class="board-title">Ваша доска</div>
+          <div id="player-board" class="board"></div>
+        </div>
+        <div class="board-block">
+          <div class="board-title">Доска соперника</div>
+          <div id="opponent-board" class="board opponent"></div>
+        </div>
+      </div>
+      <div class="meta">
+        <div id="ship-progress">Корабли: 0 / 5</div>
+        <div id="turn-indicator">Ход: ожидание матча</div>
+        <div id="opponent-status">Соперник не подключен</div>
+      </div>
+    </section>
+
+    <section class="panel slim">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Подсказки</p>
+          <h2>Как играть</h2>
+        </div>
+      </div>
+      <ul class="tips">
+        <li>Кликайте по своей доске, чтобы ставить корабли. Кнопка «Ориентация» переключает горизонталь/вертикаль (или клавиша R).</li>
+        <li>После размещения всех кораблей нажмите «Готов». Игра начнётся, когда оба игрока подтвердят расстановку.</li>
+        <li>Стреляйте по доске соперника: красный — попадание, голубой — промах. После промаха ход переходит сопернику.</li>
+        <li>Кнопка «Новая партия» сбрасывает состояние и ставит вас в очередь на новый матч.</li>
+      </ul>
+      <div class="feed">
+        <div class="feed-head">
+          <h3>Лог событий</h3>
+          <button id="clear-log" class="ghost small">Очистить</button>
+        </div>
+        <div id="log" class="log"></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
