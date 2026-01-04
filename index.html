@@ -30,6 +30,14 @@
         <label>Код комнаты</label>
         <input id="room-input" type="text" placeholder="public" />
       </div>
+      <div class="mini-form">
+        <label>Режим связи</label>
+        <div class="radio-row">
+          <label><input type="radio" name="link-mode" value="local" checked /> Локальный (две вкладки)</label>
+          <label><input type="radio" name="link-mode" value="ws" /> WebSocket</label>
+        </div>
+        <input id="ws-url" type="text" placeholder="ws://localhost:8787 (опционально)" />
+      </div>
     </div>
   </header>
 

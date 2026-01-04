@@ -31,7 +31,7 @@ class BroadcastBridge {
   constructor(room, id, onMessage, onStatus) {
     this.room = room;
     this.id = id;
-    this.channel = new BroadcastChannel("battleship-room");
+    this.channel = new BroadcastChannel(`battleship-room-${room}`);
     this.channel.onmessage = (evt) => {
       const payload = evt.data;
       if (payload.room !== this.room || payload.sender === this.id) return;
@@ -79,37 +79,76 @@ class WebSocketBridge {
   }
 }
 
+class LocalRelayBridge {
+  constructor(room, id, onMessage, onStatus) {
+    this.room = room;
+    this.id = id;
+    this.listeners = [];
+    onStatus("connected-localstorage");
+    const handler = this.handleEvent.bind(this, onMessage);
+    window.addEventListener("storage", handler);
+    this.listeners.push(() => window.removeEventListener("storage", handler));
+  }
+
+  handleEvent(onMessage, event) {
+    if (event.key !== `battleship-${this.room}` || !event.newValue) return;
+    try {
+      const payload = JSON.parse(event.newValue);
+      if (payload.sender === this.id) return;
+      onMessage(payload);
+    } catch (err) {
+      console.warn("Invalid relay packet", err);
+    }
+  }
+
+  send(message) {
+    localStorage.setItem(`battleship-${this.room}`, JSON.stringify({ ...message, room: this.room, sender: this.id, ts: Date.now() }));
+  }
+
+  close() {
+    this.listeners.forEach((fn) => fn());
+  }
+}
+
 class Transport {
   constructor(onMessage, onStatus) {
     this.onMessage = onMessage;
     this.onStatus = onStatus;
     this.clientId = randomId();
     this.bridge = null;
+    this.mode = "local";
   }
 
-  connect(room, preferWs = true) {
+  connect(room, options = {}) {
     this.room = room;
+    this.mode = options.mode || "local";
     if (this.bridge) this.bridge.close();
 
-    if (preferWs) {
-      const url = window.location.protocol === "https:" ? `wss://${window.location.host}/ws` : "ws://localhost:8787";
+    if (this.mode === "ws" && options.url) {
       try {
-        this.bridge = new WebSocketBridge(url, room, this.clientId, this.onMessage, this.onStatus);
-        // fallback if ws fails after 1.2s
+        this.bridge = new WebSocketBridge(options.url, room, this.clientId, this.onMessage, this.onStatus);
         setTimeout(() => {
           if (!this.bridge || this.bridge.socket.readyState !== WebSocket.OPEN) {
-            this.bridge?.close?.();
-            this.bridge = new BroadcastBridge(room, this.clientId, this.onMessage, this.onStatus);
-            this.onStatus("connected-local");
+            this.switchToLocal();
           }
-        }, 1200);
+        }, 1500);
         return;
       } catch (err) {
         console.warn("WS недоступен, переходим в локальный режим", err);
       }
     }
 
-    this.bridge = new BroadcastBridge(room, this.clientId, this.onMessage, this.onStatus);
+    this.switchToLocal();
+  }
+
+  switchToLocal() {
+    this.bridge?.close?.();
+    try {
+      this.bridge = new BroadcastBridge(this.room, this.clientId, this.onMessage, this.onStatus);
+    } catch (err) {
+      this.bridge = new LocalRelayBridge(this.room, this.clientId, this.onMessage, this.onStatus);
+    }
+    this.mode = "local";
   }
 
   send(payload) {
@@ -133,6 +172,7 @@ const state = {
   opponent: null,
   transport: null,
   localBot: false,
+  joinTimer: null,
 };
 
 const logStream = el("log-stream");
@@ -448,6 +488,11 @@ const setStatus = (text) => {
   el("status-label").textContent = text;
 };
 
+const announcePresence = () => {
+  if (!state.transport) return;
+  state.transport.send({ type: "join", payload: { name: state.name } });
+};
+
 const onRemoteMessage = (msg) => {
   const { type, payload, sender } = msg;
   if (sender === state.transport?.clientId) return;
@@ -463,6 +508,10 @@ const onRemoteMessage = (msg) => {
     state.opponent = { id: sender, name: payload?.name || "Соперник" };
     el("opponent-status").textContent = `Подключен ${state.opponent.name}`;
     log(`${state.opponent.name} на связи.`);
+    if (state.joinTimer) {
+      clearInterval(state.joinTimer);
+      state.joinTimer = null;
+    }
   }
   if (type === "ready") {
     state.opponentReady = true;
@@ -514,6 +563,8 @@ const connect = (localDemo = false) => {
   state.name = el("name-input").value.trim() || "Адмирал";
   state.room = el("room-input").value.trim() || "public";
   state.localBot = localDemo;
+  const chosenMode = document.querySelector('input[name="link-mode"]:checked')?.value || "local";
+  const wsUrlInput = el("ws-url").value.trim();
   state.transport = new Transport(onRemoteMessage, (status) => {
     const pill = el("connection-pill");
     if (status === "connected-ws") {
@@ -524,21 +575,32 @@ const connect = (localDemo = false) => {
       pill.textContent = "Локальный канал";
       pill.classList.remove("offline");
       setStatus("Локальный канал (BroadcastChannel)");
+    } else if (status === "connected-localstorage") {
+      pill.textContent = "Локальный (storage)";
+      pill.classList.remove("offline");
+      setStatus("Локальный мост через localStorage");
     } else {
       pill.textContent = "Оффлайн";
       pill.classList.add("offline");
       setStatus("Нет соединения");
     }
   });
-  state.transport.connect(state.room, !localDemo);
+  state.transport.connect(state.room, { mode: chosenMode === "ws" && !localDemo ? "ws" : "local", url: wsUrlInput || undefined });
   el("room-label").textContent = state.room;
   el("player-label").textContent = state.name;
   setStatus("Подключаемся...");
   if (!localDemo) {
-    setTimeout(() => {
-      state.transport.send({ type: "join", payload: { name: state.name } });
-      log(`Вы в комнате ${state.room}. Ожидание соперника...`);
-    }, 200);
+    log(`Вы в комнате ${state.room}. Ожидание соперника...`);
+    announcePresence();
+    if (state.joinTimer) clearInterval(state.joinTimer);
+    state.joinTimer = setInterval(() => {
+      if (state.opponent) {
+        clearInterval(state.joinTimer);
+        state.joinTimer = null;
+        return;
+      }
+      announcePresence();
+    }, 2500);
   } else {
     setupBot();
     log("Локальный спарринг активирован. Флот соперника расставлен автоматически.");
