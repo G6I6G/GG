@@ -3,106 +3,90 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Incremental Cookie Forge</title>
-  <link rel="stylesheet" href="styles.css" />
+  <title>Discord Voice Concierge</title>
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="top-bar">
-    <div class="identity">
-      <h1>Cookie Forge</h1>
-      <p>Incremental/Idle в стиле Cookie Clicker</p>
-    </div>
-    <div class="stats">
-      <div class="stat">
-        <div class="label">Печенье</div>
-        <div class="value" id="cookie-count">0</div>
-      </div>
-      <div class="stat">
-        <div class="label">Всего печенья</div>
-        <div class="value" id="lifetime-cookies">0</div>
-      </div>
-      <div class="stat">
-        <div class="label">Печенье / сек</div>
-        <div class="value" id="cps">0</div>
-      </div>
-      <div class="stat">
-        <div class="label">Бонус реинкарнации</div>
-        <div class="value" id="prestige">0%</div>
-      </div>
-      <div class="stat">
-        <div class="label">Достижения</div>
-        <div class="value" id="achievement-count">0 / 0</div>
-      </div>
-      <div class="stat">
-        <div class="label">Всего кликов</div>
-        <div class="value" id="total-clicks">0</div>
+  <header class="hero">
+    <div>
+      <p class="eyebrow">Flask + Discord.py</p>
+      <h1>Генерация приватных голосовых приглашений</h1>
+      <p class="lead">Создайте приватный голосовой канал, отправьте персональное приглашение и позвольте боту следить за очисткой и доступом.</p>
+      <div class="badges">
+        <span class="badge">Видимый канал</span>
+        <span class="badge">Доступ только по приглашению</span>
+        <span class="badge">Авто-удаление</span>
       </div>
     </div>
-    <div class="actions">
-      <button id="save-btn">Сохранить</button>
-      <button id="export-btn">Экспорт</button>
-      <button id="import-btn">Импорт</button>
-      <button id="reset-btn">Сбросить сохранение</button>
-      <button id="toggle-music">Музыка: выкл</button>
+    <div class="callout">
+      <h3>Как это работает</h3>
+      <ol>
+        <li>Заполните форму: ID сервера, ID пользователя и название канала.</li>
+        <li>Бот создаст голосовой канал с ограничением по подключению.</li>
+        <li>Пользователь получит DM с кнопкой принятия и ссылкой для входа.</li>
+        <li>Когда приглашённые уйдут или не примут приглашение вовремя, канал удаляется.</li>
+      </ol>
     </div>
-  </div>
+  </header>
 
-  <main class="layout">
-    <section class="panel cookie-panel">
-      <div class="cookie-wrapper">
-        <button id="big-cookie" aria-label="Большое печенье"></button>
+  <main class="grid">
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Управление приглашениями</p>
+          <h2>Отправить новое приглашение</h2>
+        </div>
+        <div class="helper">Токен бота читается из переменной окружения <code>DISCORD_BOT_TOKEN</code>.</div>
       </div>
-      <div class="info-line" id="click-value">+1 за клик</div>
-      <div class="dragon-panel">
-        <h3>Дракон</h3>
-        <p id="dragon-status">Спит. Разбудите его, чтобы получить временной множитель!</p>
-        <button id="dragon-btn">Пробудить дракона</button>
-      </div>
-      <div class="prestige-panel">
-        <h3>Реинкарнация</h3>
-        <p>Сбросьте прогресс ради постоянных бонусов к производству.</p>
-        <button id="prestige-btn">Реинкарнировать</button>
-      </div>
-      <div class="mini-panel">
-        <h3>Мини-игры</h3>
-        <div class="mini-games" id="mini-games"></div>
-        <div class="mini-status" id="mini-status"></div>
-      </div>
+
+      <form id="invite-form" class="form">
+        <label class="field">
+          <span>Server ID (Guild)</span>
+          <input id="guild-id" name="guild_id" type="text" inputmode="numeric" placeholder="123456789012345678" required />
+        </label>
+        <label class="field">
+          <span>Target User ID</span>
+          <input id="user-id" name="user_id" type="text" inputmode="numeric" placeholder="987654321098765432" required />
+        </label>
+        <label class="field">
+          <span>Название голосового канала</span>
+          <input id="channel-name" name="channel_name" type="text" maxlength="80" placeholder="Комната совещаний" required />
+        </label>
+        <label class="field inline">
+          <div>
+            <span>Минут до истечения</span>
+            <small>По умолчанию 30 минут</small>
+          </div>
+          <input id="expires-in" name="expires_in" type="number" min="1" max="240" value="30" />
+        </label>
+
+        <div class="actions">
+          <button type="submit">Отправить приглашение</button>
+          <button id="reset-form" type="button" class="ghost">Очистить форму</button>
+        </div>
+      </form>
+
+      <div class="status" id="status" role="status" aria-live="polite"></div>
     </section>
 
-    <section class="panel store-panel">
-      <div class="section-header">
-        <h2>Здания</h2>
-        <span class="helper">Автопроизводство печенья</span>
+    <section class="panel secondary">
+      <div class="panel-header">
+        <p class="eyebrow">Состояние бота</p>
+        <h2>Подсказки</h2>
       </div>
-      <div id="buildings" class="list"></div>
-
-      <div class="section-header">
-        <h2>Улучшения</h2>
-        <span class="helper">Более 600 усилений кликов и производства</span>
-      </div>
-      <div id="upgrades" class="list upgrades"></div>
+      <ul class="tips">
+        <li>Канал создаётся с видимостью для всех, но с запретом на подключение по умолчанию.</li>
+        <li>При нажатии на кнопку в DM бот выдаёт точечное разрешение на подключение и отправляет уникальную ссылку.</li>
+        <li>Когда канал пуст или время приглашения истекло, бот удалит канал и очистит его из списка.</li>
+        <li>Если у пользователя закрыты личные сообщения, бот зафиксирует ошибку и вернёт её в ответе API.</li>
+      </ul>
     </section>
   </main>
 
-  <section class="panel achievements-panel">
-    <div class="section-header">
-      <h2>Достижения</h2>
-      <span class="helper">Более 500 наград за прогресс</span>
-    </div>
-    <div class="achievement-controls">
-      <input id="achievement-search" type="search" placeholder="Поиск достижений" />
-      <span id="achievement-progress"></span>
-    </div>
-    <div id="achievements" class="achievements-grid"></div>
-  </section>
+  <footer class="footer">
+    <p>Запустите <code>python app.py</code> после установки зависимостей. Flask обслуживает эту страницу, а Discord-бот работает в фоновом потоке.</p>
+  </footer>
 
-  <section class="panel save-panel">
-    <h2>Экспорт / Импорт</h2>
-    <p>Скопируйте JSON, чтобы поделиться сохранением, или вставьте для восстановления прогресса.</p>
-    <textarea id="save-data" rows="4" placeholder="Данные сохранения будут здесь"></textarea>
-  </section>
-
-  <script type="module" src="./src/main.js"></script>
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>
