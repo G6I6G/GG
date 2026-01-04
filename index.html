@@ -4,12 +4,26 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Incremental Cookie Forge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    integrity="sha512-M9P6q4zjZmW+P0gh0WJx4oAHcBpS/mzufO9bQItw3CQLn2Kqn0SgQfT6x3/5Qg5U7DZoVSu2yNqf3V9nFO8r7A=="
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer"
+  />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div class="bg-chips" aria-hidden="true" id="bg-chips"></div>
   <div class="top-bar">
     <div class="identity">
-      <h1>Cookie Forge</h1>
+      <h1 class="title-arcade">Cookie Forge</h1>
       <p>Incremental/Idle в стиле Cookie Clicker</p>
     </div>
     <div class="stats">
@@ -45,14 +59,32 @@
       <button id="reset-btn">Сбросить сохранение</button>
       <button id="toggle-music">Музыка: выкл</button>
     </div>
+    <div class="season-badge" id="season-badge">
+      <i class="fa-solid fa-snowflake"></i>
+      <div>
+        <div class="season-title">Сезон</div>
+        <div class="season-text" id="season-text">Всесезонное производство</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="event-banner" id="event-banner">
+    <span class="spark">★</span>
+    <span id="event-text">Дополнительные бонусы за сезонные события!</span>
   </div>
 
   <main class="layout">
     <section class="panel cookie-panel">
       <div class="cookie-wrapper">
-        <button id="big-cookie" aria-label="Большое печенье"></button>
+        <div class="cookie-orbit">
+          <button id="big-cookie" aria-label="Большое печенье"></button>
+          <div id="golden-cookie" class="golden-cookie hidden" aria-label="Золотое печенье">
+            <i class="fa-solid fa-star"></i>
+          </div>
+        </div>
       </div>
       <div class="info-line" id="click-value">+1 за клик</div>
+      <div class="season-note" id="season-note">Собирайте бонусы сезона, чтобы получить больше печенья.</div>
       <div class="dragon-panel">
         <h3>Дракон</h3>
         <p id="dragon-status">Спит. Разбудите его, чтобы получить временной множитель!</p>

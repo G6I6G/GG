@@ -1,5 +1,15 @@
 const SAVE_KEY = "cookie-forge-save";
 const AUTO_SAVE_INTERVAL = 10000;
+const GOLDEN_COOKIE_INTERVAL = 25000;
+const GOLDEN_COOKIE_DURATION = 7000;
+const GOLDEN_COOKIE_MULTIPLIER = 7;
+const SEASONS = [
+  { id: "winter", icon: "fa-snowflake", label: "Зимний сезон", bonus: "+10% CPS", autoMult: 1.1 },
+  { id: "spring", icon: "fa-seedling", label: "Весенний сезон", bonus: "+15% клики", clickMult: 1.15 },
+  { id: "summer", icon: "fa-sun", label: "Летний сезон", bonus: "+8% глобально", globalMult: 1.08 },
+  { id: "halloween", icon: "fa-ghost", label: "Хэллоуин", bonus: "+20% золото печенья", goldenMult: 1.2 },
+  { id: "xmas", icon: "fa-holly-berry", label: "Рождество", bonus: "+12% автопроизводство", autoMult: 1.12 },
+];
 
 const formatNumber = (value) => {
   if (value >= 1_000_000_000) return (value / 1_000_000_000).toFixed(2) + " млрд";
@@ -211,7 +221,10 @@ class Game {
     this.dragonCooldown = 0;
     this.dragonTimer = 0;
     this.activeClickBoost = { multiplier: 1, expires: 0 };
+    this.activeGolden = { expires: 0, multiplier: 1 };
     this.lastAchievementCheck = performance.now();
+    this.season = SEASONS[0];
+    this.lastSeasonChange = performance.now();
 
     this.lastTick = performance.now();
 
@@ -413,7 +426,17 @@ class Game {
 
   getClickValue() {
     const prestigeBonus = 1 + this.prestigeBonus;
-    const base = (1 + this.clickFlat) * this.clickMultiplier * prestigeBonus * this.globalMultiplier * this.dragonBoost * this.activeClickBoost.multiplier;
+    const goldenMult = this.activeGolden.multiplier || 1;
+    const seasonClick = this.season?.clickMult || 1;
+    const base =
+      (1 + this.clickFlat) *
+      this.clickMultiplier *
+      prestigeBonus *
+      this.globalMultiplier *
+      seasonClick *
+      this.dragonBoost *
+      this.activeClickBoost.multiplier *
+      goldenMult;
     return base;
   }
 
@@ -424,7 +447,11 @@ class Game {
       cps += b.baseCps * b.count * bonus;
     });
     const prestigeBonus = 1 + this.prestigeBonus;
-    cps *= this.autoMultiplier * prestigeBonus * this.globalMultiplier * this.dragonBoost;
+    const seasonAuto = this.season?.autoMult || 1;
+    const goldenMult = this.activeGolden.multiplier || 1;
+    const seasonGlobal = this.season?.globalMult || 1;
+    cps *=
+      this.autoMultiplier * prestigeBonus * this.globalMultiplier * seasonAuto * seasonGlobal * this.dragonBoost * goldenMult;
     return cps;
   }
 
@@ -492,6 +519,12 @@ class Game {
     return true;
   }
 
+  applyGoldenCookie() {
+    const seasonGolden = this.season?.goldenMult || 1;
+    this.activeGolden = { expires: performance.now() + GOLDEN_COOKIE_DURATION, multiplier: GOLDEN_COOKIE_MULTIPLIER * seasonGolden };
+    this.ui?.flashGolden();
+  }
+
   prestige() {
     const bonus = Math.floor(Math.sqrt(this.totalCookies) / 1000);
     if (bonus <= 0) return false;
@@ -546,6 +579,8 @@ class Game {
     this.dragonBoost = data.dragonBoost || 1;
     this.buildingBonuses = data.buildingBonuses || this.buildingBonuses;
     this.dragonTimes = data.dragonTimes || 0;
+    this.season = data.season || this.season;
+    this.activeGolden = data.activeGolden || this.activeGolden;
 
     if (Array.isArray(data.buildings)) {
       data.buildings.forEach((save) => {
@@ -593,6 +628,8 @@ class Game {
       buildings: this.buildings.map((b) => ({ id: b.id, count: b.count })),
       upgrades: this.upgrades.map((u) => ({ id: u.id, purchased: u.purchased })),
       achievements: Array.from(this.unlockedAchievements),
+      season: this.season,
+      activeGolden: this.activeGolden,
     };
     this.storage.save(state);
     if (this.ui) {
@@ -643,6 +680,15 @@ class Game {
       this.activeClickBoost = { multiplier: 1, expires: 0 };
     }
 
+    if (this.activeGolden.expires && now > this.activeGolden.expires) {
+      this.activeGolden = { multiplier: 1, expires: 0 };
+    }
+
+    if (now - this.lastSeasonChange > 60000) {
+      this.rotateSeason();
+      this.lastSeasonChange = now;
+    }
+
     if (now - this.lastAchievementCheck > 1000) {
       this.checkAchievements();
       this.lastAchievementCheck = now;
@@ -650,6 +696,17 @@ class Game {
 
     if (this.ui) this.ui.render();
     requestAnimationFrame(() => this.loop());
+  }
+
+  rotateSeason() {
+    const currentIndex = SEASONS.findIndex((s) => s.id === this.season?.id);
+    const next = SEASONS[(currentIndex + 1) % SEASONS.length];
+    this.season = next;
+    this.ui?.updateSeason(next);
+  }
+
+  triggerGoldenCookie() {
+    if (this.ui) this.ui.showGolden();
   }
 }
 
@@ -666,6 +723,11 @@ class UI {
     this.achievementProgress = document.getElementById("achievement-progress");
     this.miniContainer = document.getElementById("mini-games");
     this.miniStatus = document.getElementById("mini-status");
+    this.goldenCookie = document.getElementById("golden-cookie");
+    this.eventText = document.getElementById("event-text");
+    this.seasonBadge = document.getElementById("season-badge");
+    this.seasonText = document.getElementById("season-text");
+    this.seasonNote = document.getElementById("season-note");
     this.lastAchievementUpdate = 0;
     this.lastAchievementCount = 0;
 
@@ -722,6 +784,11 @@ class UI {
       const activated = this.miniGames.activate(id);
       if (!activated) return;
     });
+
+    this.goldenCookie.addEventListener("click", () => {
+      this.hideGolden();
+      this.game.applyGoldenCookie();
+    });
   }
 
   render() {
@@ -735,6 +802,7 @@ class UI {
     this.updateUpgradeButtons();
     this.updateDragon();
     this.updateMiniButtons();
+    this.updateSeasonBanner();
     const now = performance.now();
     if (
       now - this.lastAchievementUpdate > 1000 ||
@@ -850,6 +918,16 @@ class UI {
     });
   }
 
+  updateSeasonBanner() {
+    if (!this.seasonBadge) return;
+    const season = this.game.season;
+    const icon = season?.icon || "fa-snowflake";
+    this.seasonBadge.querySelector("i").className = `fa-solid ${icon}`;
+    this.seasonText.textContent = season?.label || "Всесезонное производство";
+    this.eventText.textContent = season?.bonus || "Дополнительные бонусы за сезонные события!";
+    this.seasonNote.textContent = `Сезонный бонус: ${season?.bonus || "стандартное производство"}.`;
+  }
+
   setDragonStatus(text) {
     document.getElementById("dragon-status").textContent = text;
   }
@@ -865,6 +943,22 @@ class UI {
   updateClickValue(value) {
     document.getElementById("click-value").textContent = `+${value.toFixed(1)} за клик`;
   }
+
+  showGolden() {
+    this.goldenCookie.classList.remove("hidden");
+    setTimeout(() => this.hideGolden(), GOLDEN_COOKIE_DURATION);
+  }
+
+  hideGolden() {
+    this.goldenCookie.classList.add("hidden");
+  }
+
+  flashGolden() {
+    const banner = document.getElementById("event-banner");
+    banner.classList.add("flash");
+    this.setMiniStatus(`Золотое печенье! Временный множитель x${GOLDEN_COOKIE_MULTIPLIER}`);
+    setTimeout(() => banner.classList.remove("flash"), 1500);
+  }
 }
 
 const storage = new StorageManager(SAVE_KEY);
@@ -878,3 +972,5 @@ game.addUI(ui);
 game.loop();
 
 setInterval(() => game.save(), AUTO_SAVE_INTERVAL);
+
+setInterval(() => game.triggerGoldenCookie(), GOLDEN_COOKIE_INTERVAL + Math.random() * 5000);
