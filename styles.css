@@ -138,6 +138,17 @@ button.ghost {
   accent-color: var(--accent);
 }
 
+.actions-row {
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;

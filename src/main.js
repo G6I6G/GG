@@ -173,6 +173,7 @@ const state = {
   transport: null,
   localBot: false,
   joinTimer: null,
+  autoConnect: false,
 };
 
 const logStream = el("log-stream");
@@ -493,6 +494,27 @@ const announcePresence = () => {
   state.transport.send({ type: "join", payload: { name: state.name } });
 };
 
+const buildShareLink = () => {
+  const params = new URLSearchParams();
+  params.set("room", state.room);
+  params.set("mode", document.querySelector('input[name="link-mode"]:checked')?.value || "local");
+  const wsVal = el("ws-url").value.trim();
+  if (wsVal) params.set("ws", wsVal);
+  params.set("name", state.name || "Адмирал");
+  return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+};
+
+const copyShareLink = async () => {
+  const link = buildShareLink();
+  try {
+    await navigator.clipboard.writeText(link);
+    log("Ссылка на комнату скопирована в буфер обмена.");
+  } catch (err) {
+    log("Не удалось скопировать автоматически. Скопируйте вручную:", "miss");
+    prompt("Скопируйте ссылку вручную:", link); // graceful fallback
+  }
+};
+
 const onRemoteMessage = (msg) => {
   const { type, payload, sender } = msg;
   if (sender === state.transport?.clientId) return;
@@ -607,6 +629,32 @@ const connect = (localDemo = false) => {
   }
 };
 
+const loadSettingsFromUrl = () => {
+  const params = new URLSearchParams(window.location.search);
+  const room = params.get("room");
+  const name = params.get("name");
+  const mode = params.get("mode");
+  const ws = params.get("ws");
+  const auto = params.get("autoconnect");
+
+  if (room) {
+    state.room = room;
+    el("room-input").value = room;
+  }
+  if (name) {
+    state.name = name;
+    el("name-input").value = name;
+  }
+  if (mode && (mode === "ws" || mode === "local")) {
+    const radio = document.querySelector(`input[name="link-mode"][value="${mode}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (ws) {
+    el("ws-url").value = ws;
+  }
+  state.autoConnect = auto === "1";
+};
+
 const setupBot = () => {
   state.opponentReady = true;
   state.opponent = { id: "bot", name: "Бот" };
@@ -673,6 +721,11 @@ const attachUI = () => {
   el("ready-btn").addEventListener("click", readyUp);
   el("connect-btn").addEventListener("click", () => connect(false));
   el("local-demo").addEventListener("click", () => connect(true));
+  el("share-btn").addEventListener("click", copyShareLink);
 };
 
 attachUI();
+loadSettingsFromUrl();
+if (state.autoConnect) {
+  setTimeout(() => connect(false), 200);
+}
