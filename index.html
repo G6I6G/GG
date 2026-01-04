@@ -3,104 +3,91 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Incremental Cookie Forge</title>
+  <title>Морской бой онлайн</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="top-bar">
-    <div class="identity">
-      <h1>Cookie Forge</h1>
-      <p>Incremental/Idle в стиле Cookie Clicker</p>
-    </div>
-    <div class="stats">
-      <div class="stat">
-        <div class="label">Печенье</div>
-        <div class="value" id="cookie-count">0</div>
-      </div>
-      <div class="stat">
-        <div class="label">Всего печенья</div>
-        <div class="value" id="lifetime-cookies">0</div>
-      </div>
-      <div class="stat">
-        <div class="label">Печенье / сек</div>
-        <div class="value" id="cps">0</div>
-      </div>
-      <div class="stat">
-        <div class="label">Бонус реинкарнации</div>
-        <div class="value" id="prestige">0%</div>
-      </div>
-      <div class="stat">
-        <div class="label">Достижения</div>
-        <div class="value" id="achievement-count">0 / 0</div>
-      </div>
-      <div class="stat">
-        <div class="label">Всего кликов</div>
-        <div class="value" id="total-clicks">0</div>
+  <header class="hero">
+    <div>
+      <p class="eyebrow">Real-time WebSocket Battles</p>
+      <h1>Морской бой</h1>
+      <p class="lede">Подключайтесь к комнате, размещайте флот и сражайтесь с соперником в реальном времени. Работает через WebSocket, с локальным резервом для тестов в одной вкладке.</p>
+      <div class="hero-actions">
+        <button id="connect-btn">Быстрое подключение</button>
+        <button id="local-demo">Локальный спарринг</button>
       </div>
     </div>
-    <div class="actions">
-      <button id="save-btn">Сохранить</button>
-      <button id="export-btn">Экспорт</button>
-      <button id="import-btn">Импорт</button>
-      <button id="reset-btn">Сбросить сохранение</button>
-      <button id="toggle-music">Музыка: выкл</button>
+    <div class="hero-panel">
+      <div class="pill" id="connection-pill">Оффлайн</div>
+      <div class="meta">Комната: <span id="room-label">не подключено</span></div>
+      <div class="meta">Вы: <span id="player-label">гость</span></div>
+      <div class="meta">Статус: <span id="status-label">ожидание</span></div>
+      <div class="mini-form">
+        <label>Имя</label>
+        <input id="name-input" type="text" placeholder="Адмирал" />
+      </div>
+      <div class="mini-form">
+        <label>Код комнаты</label>
+        <input id="room-input" type="text" placeholder="public" />
+      </div>
     </div>
-  </div>
+  </header>
 
   <main class="layout">
-    <section class="panel cookie-panel">
-      <div class="cookie-wrapper">
-        <button id="big-cookie" aria-label="Большое печенье"></button>
+    <section class="panel board-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Ваш флот</p>
+          <h2>Поле игрока</h2>
+        </div>
+        <div class="tag" id="placement-tag">Размещение кораблей</div>
       </div>
-      <div class="info-line" id="click-value">+1 за клик</div>
-      <div class="dragon-panel">
-        <h3>Дракон</h3>
-        <p id="dragon-status">Спит. Разбудите его, чтобы получить временной множитель!</p>
-        <button id="dragon-btn">Пробудить дракона</button>
-      </div>
-      <div class="prestige-panel">
-        <h3>Реинкарнация</h3>
-        <p>Сбросьте прогресс ради постоянных бонусов к производству.</p>
-        <button id="prestige-btn">Реинкарнировать</button>
-      </div>
-      <div class="mini-panel">
-        <h3>Мини-игры</h3>
-        <div class="mini-games" id="mini-games"></div>
-        <div class="mini-status" id="mini-status"></div>
+      <div class="shipyard" id="shipyard"></div>
+      <div class="grid" id="player-grid" aria-label="Ваше поле"></div>
+      <div class="control-row">
+        <div class="toggles">
+          <span>Ориентация:</span>
+          <button id="orientation-btn" class="ghost">Горизонтально</button>
+          <button id="auto-btn" class="ghost">Случайно</button>
+        </div>
+        <button id="ready-btn" disabled>Готов к бою</button>
       </div>
     </section>
 
-    <section class="panel store-panel">
-      <div class="section-header">
-        <h2>Здания</h2>
-        <span class="helper">Автопроизводство печенья</span>
+    <section class="panel board-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Противник</p>
+          <h2>Вражеское поле</h2>
+        </div>
+        <div class="tag" id="turn-indicator">Ход не начат</div>
       </div>
-      <div id="buildings" class="list"></div>
-
-      <div class="section-header">
-        <h2>Улучшения</h2>
-        <span class="helper">Более 600 усилений кликов и производства</span>
-      </div>
-      <div id="upgrades" class="list upgrades"></div>
+      <div class="legend">Кликайте по клеткам, чтобы стрелять. Подсказки обновляются в реальном времени.</div>
+      <div class="grid" id="opponent-grid" aria-label="Поле соперника"></div>
+      <div class="legend" id="opponent-status">Ожидание подключений...</div>
     </section>
   </main>
 
-  <section class="panel achievements-panel">
-    <div class="section-header">
-      <h2>Достижения</h2>
-      <span class="helper">Более 500 наград за прогресс</span>
+  <section class="panel bottom-panel">
+    <div class="log">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Журнал</p>
+          <h2>Хроника боя</h2>
+        </div>
+      </div>
+      <div id="log-stream"></div>
     </div>
-    <div class="achievement-controls">
-      <input id="achievement-search" type="search" placeholder="Поиск достижений" />
-      <span id="achievement-progress"></span>
+    <div class="info">
+      <h3>Как играть</h3>
+      <ul>
+        <li>Нажмите «Быстрое подключение» или введите код комнаты и имя, чтобы соединиться.</li>
+        <li>Выберите корабль и нажмите на своё поле для его размещения. Используйте кнопку ориентации или случайной расстановки.</li>
+        <li>Когда весь флот на месте, нажмите «Готов к бою». Ход начинает тот, кто зашёл первым.</li>
+        <li>Стреляйте по полю противника. Попадания и промахи отображаются сразу, потопленные корабли подсвечиваются.</li>
+      </ul>
+      <p class="muted">Нет внешнего сервера? Игра автоматически переключится в локальный режим (BroadcastChannel) для теста между вкладками.</p>
     </div>
-    <div id="achievements" class="achievements-grid"></div>
-  </section>
-
-  <section class="panel save-panel">
-    <h2>Экспорт / Импорт</h2>
-    <p>Скопируйте JSON, чтобы поделиться сохранением, или вставьте для восстановления прогресса.</p>
-    <textarea id="save-data" rows="4" placeholder="Данные сохранения будут здесь"></textarea>
   </section>
 
   <script type="module" src="./src/main.js"></script>

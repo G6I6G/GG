@@ -1,880 +1,616 @@
-const SAVE_KEY = "cookie-forge-save";
-const AUTO_SAVE_INTERVAL = 10000;
+const BOARD_SIZE = 10;
+const LETTERS = "ABCDEFGHIJ".split("");
+const FLEET = [
+  { id: "battleship", name: "Линкор", size: 4, count: 1 },
+  { id: "cruiser", name: "Крейсер", size: 3, count: 2 },
+  { id: "destroyer", name: "Эсминец", size: 2, count: 3 },
+  { id: "submarine", name: "Подлодка", size: 1, count: 4 },
+];
 
-const formatNumber = (value) => {
-  if (value >= 1_000_000_000) return (value / 1_000_000_000).toFixed(2) + " млрд";
-  if (value >= 1_000_000) return (value / 1_000_000).toFixed(2) + " млн";
-  if (value >= 1000) return (value / 1000).toFixed(1) + "k";
-  return value.toFixed(0);
+const el = (id) => document.getElementById(id);
+const randomId = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+const nowTime = () => new Date().toLocaleTimeString();
+
+const createBoard = () => {
+  const grid = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(null));
+  return {
+    grid,
+    ships: {},
+    shots: new Set(),
+    sunk: new Set(),
+  };
 };
 
-class AudioManager {
-  constructor() {
-    this.ctx = null;
-    this.musicPlaying = false;
-    this.musicNodes = [];
-  }
+const cloneFleetState = () =>
+  FLEET.map((ship) => ({ ...ship, placed: 0, cells: [] }));
 
-  ensureContext() {
-    if (!this.ctx) {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-  }
+const coordToText = ([r, c]) => `${LETTERS[c]}${r + 1}`;
+const cellKey = (r, c) => `${r}:${c}`;
 
-  playClick() {
-    this.ensureContext();
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.frequency.value = 240;
-    gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
-    osc.connect(gain).connect(this.ctx.destination);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.15);
-  }
-
-  toggleMusic() {
-    this.ensureContext();
-    if (this.musicPlaying) {
-      this.musicNodes.forEach((node) => node.stop());
-      this.musicNodes = [];
-      this.musicPlaying = false;
-      return false;
-    }
-
-    const base = [196, 262, 330];
-    base.forEach((freq, index) => {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = index === 0 ? "sine" : "triangle";
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.03 / (index + 1), this.ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.02 / (index + 1), this.ctx.currentTime + 30);
-      osc.connect(gain).connect(this.ctx.destination);
-      osc.start();
-      this.musicNodes.push(osc);
-    });
-    this.musicPlaying = true;
-    return true;
-  }
-}
-
-class StorageManager {
-  constructor(key) {
-    this.key = key;
-  }
-
-  load() {
-    try {
-      const raw = localStorage.getItem(this.key);
-      return raw ? JSON.parse(raw) : null;
-    } catch (err) {
-      console.error("Не удалось загрузить сохранение", err);
-      return null;
-    }
-  }
-
-  save(state) {
-    try {
-      localStorage.setItem(this.key, JSON.stringify(state));
-    } catch (err) {
-      console.error("Не удалось сохранить игру", err);
-    }
-  }
-}
-
-class Building {
-  constructor({ id, name, baseCost, baseCps }) {
+class BroadcastBridge {
+  constructor(room, id, onMessage, onStatus) {
+    this.room = room;
     this.id = id;
-    this.name = name;
-    this.baseCost = baseCost;
-    this.baseCps = baseCps;
-    this.count = 0;
-  }
-
-  getCost() {
-    return Math.round(this.baseCost * Math.pow(1.15, this.count));
-  }
-}
-
-class Upgrade {
-  constructor(config) {
-    Object.assign(this, config);
-    this.purchased = false;
-  }
-}
-
-class Achievement {
-  constructor(config) {
-    Object.assign(this, config);
-    this.unlocked = false;
-  }
-}
-
-class MiniGameManager {
-  constructor(game, ui) {
-    this.game = game;
-    this.ui = ui;
-    this.cooldowns = {};
-    this.games = this.buildGames();
-  }
-
-  setUI(ui) {
-    this.ui = ui;
-  }
-
-  getCooldownRemaining(id) {
-    const until = this.cooldowns[id] || 0;
-    return Math.max(0, until - performance.now());
-  }
-
-  startCooldown(id, seconds) {
-    this.cooldowns[id] = performance.now() + seconds * 1000;
-  }
-
-  activate(id) {
-    const game = this.games.find((g) => g.id === id);
-    if (!game) return false;
-    const remaining = this.getCooldownRemaining(id);
-    if (remaining > 0) {
-      this.ui?.setMiniStatus(`Мини-игра на перезарядке: ${Math.ceil(remaining / 1000)} сек.`);
-      return false;
-    }
-    game.activate();
-    this.startCooldown(id, game.cooldown || 12);
-    return true;
-  }
-
-  buildGames() {
-    return [
-      {
-        id: "burst",
-        name: "Печенье-бурст",
-        description: "10 секунд: клики дают в 5 раз больше печенья",
-        cooldown: 20,
-        activate: () => {
-          this.game.addTemporaryClickBoost(5, 10);
-          this.ui?.setMiniStatus("Печенье-бурст активирован: x5 клики на 10 секунд.");
-        },
-      },
-      {
-        id: "lottery",
-        name: "Лотерея печенья",
-        description: "Выиграй от 1% до 10% текущего запаса печенья",
-        cooldown: 25,
-        activate: () => {
-          const reward = this.game.cookies * (0.01 + Math.random() * 0.09);
-          this.game.addCookies(reward);
-          this.ui?.setMiniStatus(`Лотерея: получено ${formatNumber(reward)} печенья.`);
-        },
-      },
-      {
-        id: "time-warp",
-        name: "Сдвиг времени",
-        description: "Моментально добавляет 30 секунд автопроизводства",
-        cooldown: 30,
-        activate: () => {
-          const reward = this.game.getCps() * 30;
-          this.game.addCookies(reward);
-          this.ui?.setMiniStatus(`Сдвиг времени: +${formatNumber(reward)} печенья.`);
-        },
-      },
-    ];
-  }
-}
-
-class Game {
-  constructor(audio, storage) {
-    this.audio = audio;
-    this.storage = storage;
-
-    this.cookies = 0;
-    this.totalCookies = 0;
-    this.totalClicks = 0;
-    this.prestigeLevel = 0;
-    this.prestigeBonus = 0;
-
-    this.clickMultiplier = 1;
-    this.clickFlat = 0;
-    this.autoMultiplier = 1;
-    this.globalMultiplier = 1;
-    this.dragonBoost = 1;
-    this.dragonTimes = 0;
-    this.buildingBonuses = {};
-
-    this.upgrades = [];
-    this.buildings = [];
-    this.achievements = [];
-    this.purchasedUpgrades = new Set();
-    this.unlockedAchievements = new Set();
-
-    this.dragonCooldown = 0;
-    this.dragonTimer = 0;
-    this.activeClickBoost = { multiplier: 1, expires: 0 };
-    this.lastAchievementCheck = performance.now();
-
-    this.lastTick = performance.now();
-
-    this.initData();
-    this.load();
-  }
-
-  initData() {
-    this.buildings = this.createBuildings();
-    this.buildings.forEach((b) => {
-      this.buildingBonuses[b.id] = 1;
-    });
-    this.upgrades = this.generateUpgrades();
-    this.achievements = this.generateAchievements();
-  }
-
-  createBuildings() {
-    return [
-      new Building({ id: "cursor", name: "Курсор", baseCost: 15, baseCps: 0.1 }),
-      new Building({ id: "grandma", name: "Бабушка", baseCost: 100, baseCps: 1 }),
-      new Building({ id: "farm", name: "Ферма", baseCost: 500, baseCps: 4 }),
-      new Building({ id: "factory", name: "Фабрика", baseCost: 3000, baseCps: 10 }),
-      new Building({ id: "mine", name: "Шахта", baseCost: 12000, baseCps: 40 }),
-      new Building({ id: "portal", name: "Портал", baseCost: 250000, baseCps: 400 }),
-      new Building({ id: "time", name: "Временная лаборатория", baseCost: 1200000, baseCps: 2000 }),
-      new Building({ id: "quantum", name: "Квантовый реактор", baseCost: 6000000, baseCps: 9000 }),
-    ];
-  }
-
-  generateUpgrades() {
-    const upgrades = [];
-
-    // Building multipliers
-    this.buildings.forEach((b) => {
-      for (let tier = 1; tier <= 80; tier++) {
-        const multiplier = 1 + (6 + tier) / 100;
-        upgrades.push(
-          new Upgrade({
-            id: `${b.id}-upgrade-${tier}`,
-            name: `${b.name}: усилитель ${tier}`,
-            description: `Увеличивает производство ${b.name} на ${(multiplier * 100 - 100).toFixed(0)}%.`,
-            cost: Math.round(b.baseCost * Math.pow(1.32, tier) * 6),
-            kind: "building-mult",
-            buildingId: b.id,
-            multiplier,
-          })
-        );
-      }
-    });
-
-    // Click upgrades
-    for (let i = 1; i <= 40; i++) {
-      upgrades.push(
-        new Upgrade({
-          id: `click-up-${i}`,
-          name: `Клик-мастер ${i}`,
-          description: `Клик приносит больше: множитель +${(i * 8).toFixed(0)}% и +${i} печенья за клик.`,
-          cost: Math.round(60 * Math.pow(1.5, i)),
-          kind: "click-mult",
-          multiplier: 1 + i * 0.08,
-          flat: i,
-        })
-      );
-    }
-
-    // Auto production upgrades
-    for (let i = 1; i <= 25; i++) {
-      upgrades.push(
-        new Upgrade({
-          id: `auto-up-${i}`,
-          name: `Автоматизация ${i}`,
-          description: `Автопроизводство увеличено на ${(20 + i * 5).toFixed(0)}%.`,
-          cost: Math.round(500 * Math.pow(1.6, i)),
-          kind: "auto-mult",
-          multiplier: 1 + (20 + i * 5) / 100,
-        })
-      );
-    }
-
-    // Global production upgrades
-    for (let i = 1; i <= 20; i++) {
-      upgrades.push(
-        new Upgrade({
-          id: `global-up-${i}`,
-          name: `Священный сахар ${i}`,
-          description: `Все производство усиливается на ${(5 + i * 3).toFixed(0)}%.`,
-          cost: Math.round(2500 * Math.pow(1.7, i)),
-          kind: "global-mult",
-          multiplier: 1 + (5 + i * 3) / 100,
-        })
-      );
-    }
-
-    return upgrades;
-  }
-
-  generateAchievements() {
-    const achievements = [];
-
-    const clickThresholds = Array.from({ length: 120 }, (_, i) => 50 + i * 250);
-    clickThresholds.forEach((th, idx) => {
-      achievements.push(
-        new Achievement({
-          id: `click-${idx}`,
-          name: `Кликовый фанат ${idx + 1}`,
-          description: `Совершите ${th} кликов по печенью`,
-          condition: (game) => game.totalClicks >= th,
-        })
-      );
-    });
-
-    const cookieThresholds = Array.from({ length: 120 }, (_, i) => Math.pow(1.25, i) * 500);
-    cookieThresholds.forEach((th, idx) => {
-      achievements.push(
-        new Achievement({
-          id: `cookies-${idx}`,
-          name: `Запасливый ${idx + 1}`,
-          description: `Накопите ${formatNumber(th)} печенья`,
-          condition: (game) => game.totalCookies >= th,
-        })
-      );
-    });
-
-    this.buildings.forEach((b) => {
-      for (let i = 1; i <= 20; i++) {
-        const need = i * 10;
-        achievements.push(
-          new Achievement({
-            id: `${b.id}-ach-${i}`,
-            name: `${b.name}: партия ${i}`,
-            description: `Купите ${need} шт. здания ${b.name}`,
-            condition: (game) => {
-              const building = game.buildings.find((x) => x.id === b.id);
-              return building && building.count >= need;
-            },
-          })
-        );
-      }
-    });
-
-    const upgradeThresholds = Array.from({ length: 80 }, (_, i) => (i + 1) * 5);
-    upgradeThresholds.forEach((th, idx) => {
-      achievements.push(
-        new Achievement({
-          id: `upgrade-${idx}`,
-          name: `Инженер ${idx + 1}`,
-          description: `Купите ${th} улучшений`,
-          condition: (game) => game.purchasedUpgrades.size >= th,
-        })
-      );
-    });
-
-    achievements.push(
-      new Achievement({
-        id: "dragon-1",
-        name: "Повелитель дракона",
-        description: "Активируйте дракона",
-        condition: (game) => game.dragonTimes > 0,
-      })
-    );
-
-    achievements.push(
-      new Achievement({
-        id: "prestige-1",
-        name: "Реинкарнатор",
-        description: "Совершите первую реинкарнацию",
-        condition: (game) => game.prestigeLevel > 0,
-      })
-    );
-
-    while (achievements.length < 520) {
-      const idx = achievements.length + 1;
-      achievements.push(
-        new Achievement({
-          id: `meta-${idx}`,
-          name: `Коллекционер ${idx}`,
-          description: `Просто продолжайте копить печенье!`,
-          condition: (game) => game.totalCookies >= 1000 * idx,
-        })
-      );
-    }
-
-    return achievements;
-  }
-
-  addCookies(amount) {
-    this.cookies += amount;
-    this.totalCookies += amount;
-  }
-
-  clickCookie() {
-    this.totalClicks += 1;
-    if (this.audio) this.audio.playClick();
-    const value = this.getClickValue();
-    this.addCookies(value);
-    this.checkAchievements();
-    this.ui && this.ui.updateClickValue(value);
-  }
-
-  getClickValue() {
-    const prestigeBonus = 1 + this.prestigeBonus;
-    const base = (1 + this.clickFlat) * this.clickMultiplier * prestigeBonus * this.globalMultiplier * this.dragonBoost * this.activeClickBoost.multiplier;
-    return base;
-  }
-
-  getCps() {
-    let cps = 0;
-    this.buildings.forEach((b) => {
-      const bonus = this.buildingBonuses[b.id] || 1;
-      cps += b.baseCps * b.count * bonus;
-    });
-    const prestigeBonus = 1 + this.prestigeBonus;
-    cps *= this.autoMultiplier * prestigeBonus * this.globalMultiplier * this.dragonBoost;
-    return cps;
-  }
-
-  buyBuilding(id) {
-    const building = this.buildings.find((b) => b.id === id);
-    if (!building) return;
-    const cost = building.getCost();
-    if (this.cookies < cost) return;
-    this.cookies -= cost;
-    building.count += 1;
-    this.checkAchievements();
-  }
-
-  buyUpgrade(id) {
-    const upgrade = this.upgrades.find((u) => u.id === id);
-    if (!upgrade || upgrade.purchased) return;
-    if (this.cookies < upgrade.cost) return;
-    this.cookies -= upgrade.cost;
-    upgrade.purchased = true;
-    this.purchasedUpgrades.add(upgrade.id);
-    this.applyUpgrade(upgrade);
-    this.checkAchievements();
-    this.ui?.renderUpgrades();
-  }
-
-  applyUpgrade(upgrade) {
-    switch (upgrade.kind) {
-      case "building-mult":
-        this.buildingBonuses[upgrade.buildingId] =
-          (this.buildingBonuses[upgrade.buildingId] || 1) * (upgrade.multiplier || 1);
-        break;
-      case "click-mult":
-        this.clickMultiplier *= upgrade.multiplier || 1;
-        this.clickFlat += upgrade.flat || 0;
-        break;
-      case "auto-mult":
-        this.autoMultiplier *= upgrade.multiplier || 1;
-        break;
-      case "global-mult":
-        this.globalMultiplier *= upgrade.multiplier || 1;
-        break;
-      default:
-        break;
-    }
-  }
-
-  addTemporaryClickBoost(multiplier, seconds) {
-    const now = performance.now();
-    this.activeClickBoost = {
-      multiplier: this.activeClickBoost.multiplier * multiplier,
-      expires: now + seconds * 1000,
+    this.channel = new BroadcastChannel("battleship-room");
+    this.channel.onmessage = (evt) => {
+      const payload = evt.data;
+      if (payload.room !== this.room || payload.sender === this.id) return;
+      onMessage(payload);
     };
+    onStatus("connected-local");
   }
 
-  activateDragon() {
-    const now = performance.now();
-    if (this.dragonCooldown > now) return false;
-    this.dragonCooldown = now + 40000;
-    this.dragonTimer = now + 20000;
-    this.dragonBoost = 3;
-    this.dragonTimes = (this.dragonTimes || 0) + 1;
-    setTimeout(() => {
-      this.dragonBoost = 1;
-    }, 20000);
-    return true;
+  send(message) {
+    this.channel.postMessage({ ...message, room: this.room, sender: this.id });
   }
 
-  prestige() {
-    const bonus = Math.floor(Math.sqrt(this.totalCookies) / 1000);
-    if (bonus <= 0) return false;
-    this.prestigeLevel += 1;
-    this.prestigeBonus += bonus / 100;
-
-    // reset run
-    this.cookies = 0;
-    this.totalClicks = 0;
-    this.buildings.forEach((b) => (b.count = 0));
-    this.buildingBonuses = Object.fromEntries(this.buildings.map((b) => [b.id, 1]));
-
-    this.clickMultiplier = 1;
-    this.clickFlat = 0;
-    this.autoMultiplier = 1;
-    this.globalMultiplier = 1;
-    this.dragonBoost = 1;
-    this.activeClickBoost = { multiplier: 1, expires: 0 };
-
-    this.upgrades.forEach((u) => (u.purchased = false));
-    this.purchasedUpgrades.clear();
-    this.save();
-    return true;
+  close() {
+    this.channel.close();
   }
+}
 
-  checkAchievements() {
-    this.achievements.forEach((ach) => {
-      if (this.unlockedAchievements.has(ach.id)) return;
-      if (ach.condition(this)) {
-        this.unlockedAchievements.add(ach.id);
-        ach.unlocked = true;
+class WebSocketBridge {
+  constructor(url, room, id, onMessage, onStatus) {
+    this.socket = new WebSocket(url);
+    this.room = room;
+    this.id = id;
+    this.socket.addEventListener("open", () => onStatus("connected-ws"));
+    this.socket.addEventListener("message", (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.room !== this.room || data.sender === this.id) return;
+        onMessage(data);
+      } catch (err) {
+        console.warn("Неверный пакет", err);
       }
     });
+    this.socket.addEventListener("close", () => onStatus("closed"));
+    this.socket.addEventListener("error", () => onStatus("closed"));
   }
 
-  addUI(ui) {
-    this.ui = ui;
+  send(message) {
+    if (this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(message));
+    }
   }
 
-  load() {
-    const data = this.storage.load();
-    if (!data) return;
-    this.cookies = data.cookies || 0;
-    this.totalCookies = data.totalCookies || 0;
-    this.totalClicks = data.totalClicks || 0;
-    this.prestigeLevel = data.prestigeLevel || 0;
-    this.prestigeBonus = data.prestigeBonus || 0;
-    this.clickMultiplier = data.clickMultiplier || 1;
-    this.clickFlat = data.clickFlat || 0;
-    this.autoMultiplier = data.autoMultiplier || 1;
-    this.globalMultiplier = data.globalMultiplier || 1;
-    this.dragonBoost = data.dragonBoost || 1;
-    this.buildingBonuses = data.buildingBonuses || this.buildingBonuses;
-    this.dragonTimes = data.dragonTimes || 0;
+  close() {
+    this.socket.close();
+  }
+}
 
-    if (Array.isArray(data.buildings)) {
-      data.buildings.forEach((save) => {
-        const target = this.buildings.find((b) => b.id === save.id);
-        if (target) target.count = save.count || 0;
-      });
+class Transport {
+  constructor(onMessage, onStatus) {
+    this.onMessage = onMessage;
+    this.onStatus = onStatus;
+    this.clientId = randomId();
+    this.bridge = null;
+  }
+
+  connect(room, preferWs = true) {
+    this.room = room;
+    if (this.bridge) this.bridge.close();
+
+    if (preferWs) {
+      const url = window.location.protocol === "https:" ? `wss://${window.location.host}/ws` : "ws://localhost:8787";
+      try {
+        this.bridge = new WebSocketBridge(url, room, this.clientId, this.onMessage, this.onStatus);
+        // fallback if ws fails after 1.2s
+        setTimeout(() => {
+          if (!this.bridge || this.bridge.socket.readyState !== WebSocket.OPEN) {
+            this.bridge?.close?.();
+            this.bridge = new BroadcastBridge(room, this.clientId, this.onMessage, this.onStatus);
+            this.onStatus("connected-local");
+          }
+        }, 1200);
+        return;
+      } catch (err) {
+        console.warn("WS недоступен, переходим в локальный режим", err);
+      }
     }
 
-    if (Array.isArray(data.upgrades)) {
-      const purchasedIds = new Set(data.upgrades.filter((u) => u.purchased).map((u) => u.id));
-      this.upgrades.forEach((u) => {
-        u.purchased = purchasedIds.has(u.id);
-        if (u.purchased) {
-          this.purchasedUpgrades.add(u.id);
-          this.applyUpgrade(u);
+    this.bridge = new BroadcastBridge(room, this.clientId, this.onMessage, this.onStatus);
+  }
+
+  send(payload) {
+    if (!this.bridge) return;
+    this.bridge.send({ ...payload, sender: this.clientId, room: this.room });
+  }
+}
+
+const state = {
+  name: "Адмирал",
+  room: "public",
+  orientation: "horizontal",
+  fleet: cloneFleetState(),
+  selectedShipId: null,
+  playerBoard: createBoard(),
+  opponentBoard: createBoard(),
+  ready: false,
+  opponentReady: false,
+  phase: "placement",
+  turn: "",
+  opponent: null,
+  transport: null,
+  localBot: false,
+};
+
+const logStream = el("log-stream");
+const log = (text, variant = "") => {
+  const row = document.createElement("div");
+  row.className = "log-entry";
+  const time = document.createElement("span");
+  time.className = "time";
+  time.textContent = nowTime();
+  const body = document.createElement("span");
+  body.className = `text ${variant}`;
+  body.textContent = text;
+  row.append(time, body);
+  logStream.append(row);
+  logStream.scrollTop = logStream.scrollHeight;
+};
+
+const renderFleet = () => {
+  const container = el("shipyard");
+  container.innerHTML = "";
+  state.fleet.forEach((ship) => {
+    const remaining = ship.count - ship.placed;
+    const card = document.createElement("div");
+    card.className = "ship-card" + (state.selectedShipId === ship.id ? " active" : "");
+    card.dataset.ship = ship.id;
+    card.innerHTML = `
+      <div class="badge">${ship.name}</div>
+      <div class="meta">Размер: ${ship.size} | Осталось: ${remaining}</div>
+    `;
+    card.addEventListener("click", () => {
+      state.selectedShipId = ship.id;
+      renderFleet();
+    });
+    container.appendChild(card);
+  });
+};
+
+const buildGrid = (container, isOpponent) => {
+  container.innerHTML = "";
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      const cell = document.createElement("button");
+      cell.className = "cell";
+      cell.dataset.row = r;
+      cell.dataset.col = c;
+      cell.title = `${LETTERS[c]}${r + 1}`;
+      if (isOpponent) {
+        cell.addEventListener("click", () => tryAttack(r, c));
+      } else {
+        cell.addEventListener("click", () => tryPlaceShip(r, c));
+      }
+      container.appendChild(cell);
+    }
+  }
+};
+
+const placeable = (board, r, c, size, orientation) => {
+  if (orientation === "horizontal" && c + size > BOARD_SIZE) return false;
+  if (orientation === "vertical" && r + size > BOARD_SIZE) return false;
+  for (let i = 0; i < size; i++) {
+    const rr = r + (orientation === "vertical" ? i : 0);
+    const cc = c + (orientation === "horizontal" ? i : 0);
+    if (board.grid[rr][cc]) return false;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const nr = rr + dr;
+        const nc = cc + dc;
+        if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
+        if (board.grid[nr][nc]) return false;
+      }
+    }
+  }
+  return true;
+};
+
+const commitPlacement = (ship, r, c) => {
+  const board = state.playerBoard;
+  const cells = [];
+  const shipKey = `${ship.id}-${ship.placed}`;
+  for (let i = 0; i < ship.size; i++) {
+    const rr = r + (state.orientation === "vertical" ? i : 0);
+    const cc = c + (state.orientation === "horizontal" ? i : 0);
+    board.grid[rr][cc] = shipKey;
+    cells.push([rr, cc]);
+  }
+  board.ships[shipKey] = { name: ship.name, cells, hits: new Set(), sunkCells: new Set() };
+  ship.placed += 1;
+};
+
+const tryPlaceShip = (r, c) => {
+  if (state.phase !== "placement") return;
+  const ship = state.fleet.find((s) => s.id === state.selectedShipId);
+  if (!ship) return;
+  if (ship.placed >= ship.count) return;
+  if (!placeable(state.playerBoard, r, c, ship.size, state.orientation)) return;
+  commitPlacement(ship, r, c);
+  renderBoard("player");
+  renderFleet();
+  checkReady();
+};
+
+const autoPlace = () => {
+  state.playerBoard = createBoard();
+  state.fleet = cloneFleetState();
+  FLEET.forEach((ship) => {
+    for (let i = 0; i < ship.count; i++) {
+      let placed = false;
+      let guard = 0;
+      while (!placed && guard < 400) {
+        guard += 1;
+        const orientation = Math.random() > 0.5 ? "horizontal" : "vertical";
+        const r = Math.floor(Math.random() * BOARD_SIZE);
+        const c = Math.floor(Math.random() * BOARD_SIZE);
+        if (placeable(state.playerBoard, r, c, ship.size, orientation)) {
+          state.orientation = orientation;
+          const fleetShip = state.fleet.find((s) => s.id === ship.id);
+          state.selectedShipId = ship.id;
+          commitPlacement(fleetShip, r, c);
+          placed = true;
         }
-      });
-    }
-
-    if (Array.isArray(data.achievements)) {
-      data.achievements.forEach((id) => {
-        this.unlockedAchievements.add(id);
-        const ach = this.achievements.find((a) => a.id === id);
-        if (ach) ach.unlocked = true;
-      });
-    }
-
-    this.checkAchievements();
-  }
-
-  save() {
-    const state = {
-      cookies: this.cookies,
-      totalCookies: this.totalCookies,
-      totalClicks: this.totalClicks,
-      prestigeLevel: this.prestigeLevel,
-      prestigeBonus: this.prestigeBonus,
-      clickMultiplier: this.clickMultiplier,
-      clickFlat: this.clickFlat,
-      autoMultiplier: this.autoMultiplier,
-      globalMultiplier: this.globalMultiplier,
-      dragonBoost: this.dragonBoost,
-      buildingBonuses: this.buildingBonuses,
-      dragonTimes: this.dragonTimes || 0,
-      buildings: this.buildings.map((b) => ({ id: b.id, count: b.count })),
-      upgrades: this.upgrades.map((u) => ({ id: u.id, purchased: u.purchased })),
-      achievements: Array.from(this.unlockedAchievements),
-    };
-    this.storage.save(state);
-    if (this.ui) {
-      this.ui.showSaveData(state);
-    }
-  }
-
-  export() {
-    const state = {
-      cookies: this.cookies,
-      totalCookies: this.totalCookies,
-      totalClicks: this.totalClicks,
-      prestigeLevel: this.prestigeLevel,
-      prestigeBonus: this.prestigeBonus,
-      clickMultiplier: this.clickMultiplier,
-      clickFlat: this.clickFlat,
-      autoMultiplier: this.autoMultiplier,
-      globalMultiplier: this.globalMultiplier,
-      dragonBoost: this.dragonBoost,
-      buildingBonuses: this.buildingBonuses,
-      dragonTimes: this.dragonTimes || 0,
-      buildings: this.buildings.map((b) => ({ id: b.id, count: b.count })),
-      upgrades: this.upgrades.map((u) => ({ id: u.id, purchased: u.purchased })),
-      achievements: Array.from(this.unlockedAchievements),
-    };
-    return JSON.stringify(state);
-  }
-
-  import(data) {
-    try {
-      const parsed = typeof data === "string" ? JSON.parse(data) : data;
-      this.storage.save(parsed);
-      window.location.reload();
-    } catch (err) {
-      console.error("Импорт не удался", err);
-    }
-  }
-
-  loop() {
-    const now = performance.now();
-    const delta = (now - this.lastTick) / 1000;
-    this.lastTick = now;
-
-    const cps = this.getCps();
-    this.addCookies(cps * delta);
-
-    if (this.activeClickBoost.expires && now > this.activeClickBoost.expires) {
-      this.activeClickBoost = { multiplier: 1, expires: 0 };
-    }
-
-    if (now - this.lastAchievementCheck > 1000) {
-      this.checkAchievements();
-      this.lastAchievementCheck = now;
-    }
-
-    if (this.ui) this.ui.render();
-    requestAnimationFrame(() => this.loop());
-  }
-}
-
-class UI {
-  constructor(game, audio, storage, miniGames) {
-    this.game = game;
-    this.audio = audio;
-    this.storage = storage;
-    this.miniGames = miniGames;
-    this.buildingContainer = document.getElementById("buildings");
-    this.upgradeContainer = document.getElementById("upgrades");
-    this.achievementContainer = document.getElementById("achievements");
-    this.achievementSearch = document.getElementById("achievement-search");
-    this.achievementProgress = document.getElementById("achievement-progress");
-    this.miniContainer = document.getElementById("mini-games");
-    this.miniStatus = document.getElementById("mini-status");
-    this.lastAchievementUpdate = 0;
-    this.lastAchievementCount = 0;
-
-    this.bindEvents();
-    this.renderBuildings();
-    this.renderUpgrades();
-    this.renderAchievements();
-    this.renderMiniGames();
-    this.lastAchievementCount = this.game.unlockedAchievements.size;
-    this.lastAchievementUpdate = performance.now();
-  }
-
-  bindEvents() {
-    document.getElementById("big-cookie").addEventListener("click", () => this.game.clickCookie());
-    document.getElementById("save-btn").addEventListener("click", () => this.game.save());
-    document.getElementById("export-btn").addEventListener("click", () => {
-      const data = this.game.export();
-      this.showSaveData(JSON.parse(data));
-    });
-    document.getElementById("import-btn").addEventListener("click", () => {
-      const raw = document.getElementById("save-data").value;
-      if (raw.trim()) this.game.import(raw.trim());
-    });
-    document.getElementById("reset-btn").addEventListener("click", () => {
-      localStorage.removeItem(SAVE_KEY);
-      window.location.reload();
-    });
-    document.getElementById("toggle-music").addEventListener("click", (e) => {
-      const playing = this.audio.toggleMusic();
-      e.currentTarget.textContent = `Музыка: ${playing ? "вкл" : "выкл"}`;
-    });
-    document.getElementById("dragon-btn").addEventListener("click", () => {
-      if (this.game.activateDragon()) {
-        this.setDragonStatus("Дракон бодрствует и множит производство x3 на 20 сек!");
       }
-    });
-    document.getElementById("prestige-btn").addEventListener("click", () => {
-      if (this.game.prestige()) {
-        this.setDragonStatus("Реинкарнация завершена. Постоянный бонус усилен!");
-      }
-    });
-    this.achievementSearch.addEventListener("input", () => this.renderAchievements());
-    this.buildingContainer.addEventListener("click", (e) => {
-      const id = e.target.getAttribute("data-buy");
-      if (id) this.game.buyBuilding(id);
-    });
-    this.upgradeContainer.addEventListener("click", (e) => {
-      const id = e.target.getAttribute("data-up");
-      if (id) this.game.buyUpgrade(id);
-    });
-    this.miniContainer.addEventListener("click", (e) => {
-      const id = e.target.getAttribute("data-mini");
-      if (!id) return;
-      const activated = this.miniGames.activate(id);
-      if (!activated) return;
-    });
+    }
+  });
+  renderBoard("player");
+  renderFleet();
+  checkReady();
+};
+
+const checkReady = () => {
+  const allPlaced = state.fleet.every((s) => s.placed === s.count);
+  el("ready-btn").disabled = !allPlaced || state.phase !== "placement";
+  if (allPlaced && !state.selectedShipId) state.selectedShipId = state.fleet[0].id;
+};
+
+const renderBoard = (side) => {
+  const board = side === "player" ? state.playerBoard : state.opponentBoard;
+  const gridEl = side === "player" ? el("player-grid") : el("opponent-grid");
+  gridEl.querySelectorAll(".cell").forEach((cell) => {
+    const r = Number(cell.dataset.row);
+    const c = Number(cell.dataset.col);
+    cell.className = "cell";
+    const mark = board.grid[r][c];
+    const key = cellKey(r, c);
+    if (side === "player" && mark) cell.classList.add("ship");
+    if (board.shots.has(key)) {
+      const content = mark ? "hit" : "miss";
+      cell.classList.add(content);
+    }
+    if (side === "player" && mark && board.ships[mark]?.sunkCells?.has(key)) {
+      cell.classList.add("sunk");
+    }
+    if (side === "opponent" && board.sunk.has(key)) {
+      cell.classList.add("sunk");
+    }
+  });
+};
+
+const toggleOrientation = () => {
+  state.orientation = state.orientation === "horizontal" ? "vertical" : "horizontal";
+  el("orientation-btn").textContent = state.orientation === "horizontal" ? "Горизонтально" : "Вертикально";
+};
+
+const applyIncomingAttack = (r, c) => {
+  const board = state.playerBoard;
+  const key = cellKey(r, c);
+  if (board.shots.has(key)) return { result: "repeat" };
+  board.shots.add(key);
+  const shipId = board.grid[r][c];
+  if (!shipId) return { result: "miss" };
+  const shipEntry = board.ships[shipId];
+  shipEntry.hits.add(key);
+  const allHit = shipEntry.hits.size === shipEntry.cells.length;
+  if (allHit) {
+    shipEntry.sunkCells = new Set(shipEntry.cells.map(([rr, cc]) => cellKey(rr, cc)));
+    shipEntry.cells.forEach(([rr, cc]) => board.sunk.add(cellKey(rr, cc)));
+    const finished = Object.values(board.ships).every((s) => s.hits.size === s.cells.length);
+    return { result: finished ? "defeat" : "sunk", ship: shipEntry.name, cells: shipEntry.cells };
+  }
+  return { result: "hit" };
+};
+
+const tryAttack = (r, c) => {
+  if (state.phase !== "playing" || state.turn !== "you" || (state.localBot === true && state.opponentReady === false)) return;
+  const key = cellKey(r, c);
+  if (state.opponentBoard.shots.has(key)) return;
+  state.opponentBoard.shots.add(key);
+
+  if (state.localBot) {
+    const outcome = resolveAttackAgainstBot(r, c);
+    handleAttackResult({ r, c, ...outcome, from: "self" });
+    return;
   }
 
-  render() {
-    document.getElementById("cookie-count").textContent = formatNumber(this.game.cookies);
-    document.getElementById("lifetime-cookies").textContent = formatNumber(this.game.totalCookies);
-    document.getElementById("cps").textContent = this.game.getCps().toFixed(1);
-    document.getElementById("prestige").textContent = `${(this.game.prestigeBonus * 100).toFixed(1)}%`;
-    document.getElementById("achievement-count").textContent = `${this.game.unlockedAchievements.size} / ${this.game.achievements.length}`;
-    document.getElementById("total-clicks").textContent = formatNumber(this.game.totalClicks);
-    this.updateBuildingButtons();
-    this.updateUpgradeButtons();
-    this.updateDragon();
-    this.updateMiniButtons();
-    const now = performance.now();
-    if (
-      now - this.lastAchievementUpdate > 1000 ||
-      this.lastAchievementCount !== this.game.unlockedAchievements.size
-    ) {
-      this.renderAchievements();
-      this.lastAchievementUpdate = now;
-      this.lastAchievementCount = this.game.unlockedAchievements.size;
+  if (!state.transport) return;
+  state.turn = "opponent";
+  updateTurn();
+  state.transport.send({
+    type: "attack",
+    payload: { r, c, name: state.name },
+  });
+};
+
+const resolveAttackAgainstBot = (r, c) => {
+  const board = state.opponentBoard;
+  const key = cellKey(r, c);
+  const shipId = board.grid[r][c];
+  if (!shipId) return { result: "miss" };
+  const shipEntry = board.ships[shipId];
+  shipEntry.hits.add(key);
+  const sunk = shipEntry.hits.size === shipEntry.cells.length;
+  if (sunk) {
+    shipEntry.sunkCells = new Set(shipEntry.cells.map(([rr, cc]) => cellKey(rr, cc)));
+    shipEntry.cells.forEach(([rr, cc]) => board.sunk.add(cellKey(rr, cc)));
+    const finished = Object.values(board.ships).every((s) => s.hits.size === s.cells.length);
+    return { result: finished ? "victory" : "sunk", ship: shipEntry.name, cells: shipEntry.cells };
+  }
+  return { result: "hit" };
+};
+
+const handleAttackResult = (data) => {
+  const { r, c, result, ship, cells } = data;
+  const board = state.opponentBoard;
+  if (result === "repeat") return;
+  const key = cellKey(r, c);
+  if (!board.shots.has(key)) board.shots.add(key);
+
+  if (result === "hit" || result === "sunk" || result === "victory") {
+    board.grid[r][c] = board.grid[r][c] || "hit";
+    if (cells) {
+      cells.forEach(([rr, cc]) => {
+        board.grid[rr][cc] = board.grid[rr][cc] || "hit";
+        board.sunk.add(cellKey(rr, cc));
+      });
     }
   }
 
-  renderBuildings() {
-    this.buildingContainer.innerHTML = "";
-    this.game.buildings.forEach((b) => {
-      const card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML = `
-        <div>
-          <div class="title">${b.name}</div>
-          <div class="desc">Производит ${b.baseCps} печ./сек. Сейчас: ${b.count}</div>
-          <div class="meta">Стоимость: <span data-cost="${b.id}">${formatNumber(b.getCost())}</span></div>
-        </div>
-        <button data-buy="${b.id}">Купить</button>`;
-      this.buildingContainer.appendChild(card);
+  renderBoard("opponent");
+
+  if (result === "miss") {
+    log(`Промах по ${coordToText([r, c])}.`, "miss");
+    state.turn = "opponent";
+  } else if (result === "hit") {
+    log(`Попадание по ${coordToText([r, c])}!`, "hit");
+    state.turn = "you";
+  } else if (result === "sunk") {
+    log(`Корабль противника потоплен: ${ship || ""}!`, "sunk");
+    state.turn = "you";
+  } else if (result === "victory") {
+    log("Все корабли противника потоплены. Победа!", "sunk");
+    state.phase = "finished";
+    el("turn-indicator").textContent = "Победа";
+    el("opponent-status").textContent = "Вы выиграли";
+    return;
+  }
+  updateTurn();
+  if (state.localBot && state.phase === "playing" && state.turn === "opponent") {
+    setTimeout(botTurn, 650);
+  }
+};
+
+const botTurn = () => {
+  if (state.phase !== "playing" || state.turn !== "opponent") return;
+  const attempts = [];
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      attempts.push([r, c]);
+    }
+  }
+  while (attempts.length) {
+    const idx = Math.floor(Math.random() * attempts.length);
+    const [r, c] = attempts.splice(idx, 1)[0];
+    const key = cellKey(r, c);
+    if (state.playerBoard.shots.has(key)) continue;
+    const outcome = applyIncomingAttack(r, c);
+    renderBoard("player");
+    if (outcome.result === "miss") {
+      log(`Бот промахнулся по ${coordToText([r, c])}.`, "miss");
+      state.turn = "you";
+    } else if (outcome.result === "hit") {
+      log(`Бот попал в ${coordToText([r, c])}!`, "hit");
+      state.turn = "opponent";
+      setTimeout(botTurn, 750);
+    } else if (outcome.result === "sunk") {
+      log(`Бот потопил ваш корабль (${outcome.ship}).`, "sunk");
+      state.turn = "opponent";
+      setTimeout(botTurn, 750);
+    } else if (outcome.result === "defeat") {
+      log("Ваш флот потоплен. Поражение.", "hit");
+      state.phase = "finished";
+      el("turn-indicator").textContent = "Поражение";
+      el("opponent-status").textContent = "Бот победил";
+      return;
+    }
+    updateTurn();
+    break;
+  }
+};
+
+const updateTurn = () => {
+  const tag = el("turn-indicator");
+  if (state.phase === "placement") {
+    tag.textContent = "Размещаемся";
+  } else if (state.phase === "waiting") {
+    tag.textContent = "Ожидание оппонента";
+  } else if (state.phase === "playing") {
+    tag.textContent = state.turn === "you" ? "Ваш ход" : "Ход соперника";
+  } else if (state.phase === "finished") {
+    // handled elsewhere
+  }
+};
+
+const setStatus = (text) => {
+  el("status-label").textContent = text;
+};
+
+const onRemoteMessage = (msg) => {
+  const { type, payload, sender } = msg;
+  if (sender === state.transport?.clientId) return;
+  if (type === "join") {
+    if (!state.opponent) {
+      state.opponent = { id: sender, name: payload?.name || "Соперник" };
+      el("opponent-status").textContent = `Подключен ${state.opponent.name}`;
+      log(`${state.opponent.name} зашёл в комнату.`);
+      state.transport.send({ type: "hello", payload: { name: state.name } });
+    }
+  }
+  if (type === "hello" && !state.opponent) {
+    state.opponent = { id: sender, name: payload?.name || "Соперник" };
+    el("opponent-status").textContent = `Подключен ${state.opponent.name}`;
+    log(`${state.opponent.name} на связи.`);
+  }
+  if (type === "ready") {
+    state.opponentReady = true;
+    el("opponent-status").textContent = `${state.opponent?.name || "Соперник"} готов`;
+    log(`${state.opponent?.name || "Соперник"} готов к бою.`);
+    maybeStartBattle(sender);
+  }
+  if (type === "attack") {
+    if (state.phase !== "playing") state.phase = "playing";
+    const { r, c, name } = payload;
+    const outcome = applyIncomingAttack(r, c);
+    renderBoard("player");
+    if (outcome.result === "miss") {
+      log(`${name || "Соперник"} промахнулся по ${coordToText([r, c])}.`, "miss");
+      state.turn = "you";
+    } else if (outcome.result === "hit") {
+      log(`${name || "Соперник"} попал в ${coordToText([r, c])}!`, "hit");
+      state.turn = "opponent";
+    } else if (outcome.result === "sunk") {
+      log(`${name || "Соперник"} потопил ваш корабль (${outcome.ship}).`, "sunk");
+      state.turn = "opponent";
+    } else if (outcome.result === "defeat") {
+      log("Ваш флот уничтожен.", "hit");
+      state.phase = "finished";
+      el("turn-indicator").textContent = "Поражение";
+      el("opponent-status").textContent = "Ваш флот потоплен";
+    }
+    updateTurn();
+    state.transport.send({
+      type: "attack-result",
+      payload: { r, c, ...outcome },
     });
   }
-
-  renderUpgrades() {
-    this.upgradeContainer.innerHTML = "";
-    const available = this.game.upgrades.filter((u) => !u.purchased).sort((a, b) => a.cost - b.cost).slice(0, 50);
-    available.forEach((u) => {
-      const card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML = `
-        <div>
-          <div class="title">${u.name}</div>
-          <div class="desc">${u.description}</div>
-          <div class="meta">Цена: ${formatNumber(u.cost)}</div>
-        </div>
-        <button data-up="${u.id}">Купить</button>`;
-      this.upgradeContainer.appendChild(card);
-    });
+  if (type === "attack-result") {
+    handleAttackResult({ ...payload, from: "remote" });
   }
+};
 
-  updateBuildingButtons() {
-    this.game.buildings.forEach((b) => {
-      const costEl = this.buildingContainer.querySelector(`[data-cost="${b.id}"]`);
-      const btn = this.buildingContainer.querySelector(`[data-buy="${b.id}"]`);
-      if (costEl) costEl.textContent = formatNumber(b.getCost());
-      if (btn) btn.disabled = this.game.cookies < b.getCost();
-      const desc = btn?.previousElementSibling?.querySelector(".desc");
-      if (desc) desc.textContent = `Производит ${b.baseCps} печ./сек. Сейчас: ${b.count}`;
-    });
+const maybeStartBattle = (sender) => {
+  if (!state.ready || !state.opponentReady) return;
+  state.phase = "playing";
+  const host = [state.transport.clientId, sender || state.opponent?.id].sort()[0];
+  state.turn = host === state.transport.clientId ? "you" : "opponent";
+  updateTurn();
+  el("opponent-status").textContent = `Противник готов. ${state.turn === "you" ? "Ваш ход" : "Ожидание"}.`;
+};
+
+const connect = (localDemo = false) => {
+  state.name = el("name-input").value.trim() || "Адмирал";
+  state.room = el("room-input").value.trim() || "public";
+  state.localBot = localDemo;
+  state.transport = new Transport(onRemoteMessage, (status) => {
+    const pill = el("connection-pill");
+    if (status === "connected-ws") {
+      pill.textContent = "WebSocket";
+      pill.classList.remove("offline");
+      setStatus("Сервер подключен");
+    } else if (status === "connected-local") {
+      pill.textContent = "Локальный канал";
+      pill.classList.remove("offline");
+      setStatus("Локальный канал (BroadcastChannel)");
+    } else {
+      pill.textContent = "Оффлайн";
+      pill.classList.add("offline");
+      setStatus("Нет соединения");
+    }
+  });
+  state.transport.connect(state.room, !localDemo);
+  el("room-label").textContent = state.room;
+  el("player-label").textContent = state.name;
+  setStatus("Подключаемся...");
+  if (!localDemo) {
+    setTimeout(() => {
+      state.transport.send({ type: "join", payload: { name: state.name } });
+      log(`Вы в комнате ${state.room}. Ожидание соперника...`);
+    }, 200);
+  } else {
+    setupBot();
+    log("Локальный спарринг активирован. Флот соперника расставлен автоматически.");
   }
+};
 
-  updateUpgradeButtons() {
-    this.upgradeContainer.querySelectorAll("[data-up]").forEach((btn) => {
-      const id = btn.getAttribute("data-up");
-      const upgrade = this.game.upgrades.find((u) => u.id === id);
-      if (upgrade) btn.disabled = this.game.cookies < upgrade.cost;
-    });
+const setupBot = () => {
+  state.opponentReady = true;
+  state.opponent = { id: "bot", name: "Бот" };
+  state.opponentBoard = createBoard();
+  autoPlaceForBoard(state.opponentBoard);
+  state.phase = "placement";
+  state.turn = "you";
+  updateTurn();
+};
+
+const autoPlaceForBoard = (board) => {
+  const fleet = cloneFleetState();
+  fleet.forEach((ship) => {
+    for (let i = 0; i < ship.count; i++) {
+      const shipKey = `${ship.id}-${i}`;
+      let placed = false;
+      while (!placed) {
+        const orientation = Math.random() > 0.5 ? "horizontal" : "vertical";
+        const r = Math.floor(Math.random() * BOARD_SIZE);
+        const c = Math.floor(Math.random() * BOARD_SIZE);
+        if (!placeable({ grid: board.grid }, r, c, ship.size, orientation)) continue;
+        const cells = [];
+        for (let k = 0; k < ship.size; k++) {
+          const rr = r + (orientation === "vertical" ? k : 0);
+          const cc = c + (orientation === "horizontal" ? k : 0);
+          board.grid[rr][cc] = shipKey;
+          cells.push([rr, cc]);
+        }
+        board.ships[shipKey] = { name: ship.name, cells, hits: new Set(), sunkCells: new Set() };
+        placed = true;
+      }
+    }
+  });
+};
+
+const readyUp = () => {
+  if (state.phase !== "placement") return;
+  state.ready = true;
+  state.phase = state.opponentReady || state.localBot ? "playing" : "waiting";
+  el("placement-tag").textContent = "Готов";
+  if (state.transport && !state.localBot) {
+    state.transport.send({ type: "ready", payload: { name: state.name } });
   }
-
-  updateDragon() {
-    const now = performance.now();
-    const ready = this.game.dragonCooldown < now;
-    const status = ready
-      ? "Дракон отдыхает и готов к активации."
-      : `Перезарядка: ${Math.ceil((this.game.dragonCooldown - now) / 1000)} сек.`;
-    this.setDragonStatus(status);
+  if (state.localBot) {
+    state.turn = "you";
+    state.opponentReady = true;
+    updateTurn();
+    log("Вы готовы. Ход за вами.");
+  } else {
+    log("Вы готовы. Ждём соперника...");
   }
+};
 
-  renderAchievements() {
-    this.achievementProgress.textContent = `${this.game.unlockedAchievements.size}/${this.game.achievements.length}`;
-    const filter = (this.achievementSearch.value || "").toLowerCase();
-    this.achievementContainer.innerHTML = "";
-    this.game.achievements
-      .filter((a) => a.name.toLowerCase().includes(filter) || a.description.toLowerCase().includes(filter))
-      .forEach((ach) => {
-        const card = document.createElement("div");
-        card.className = "achievement" + (ach.unlocked ? "" : " locked");
-        card.innerHTML = `
-          <div class="name">${ach.name}</div>
-          <div class="text">${ach.description}</div>
-        `;
-        this.achievementContainer.appendChild(card);
-      });
-  }
+const attachUI = () => {
+  buildGrid(el("player-grid"), false);
+  buildGrid(el("opponent-grid"), true);
+  renderBoard("player");
+  renderBoard("opponent");
+  renderFleet();
+  checkReady();
 
-  renderMiniGames() {
-    this.miniContainer.innerHTML = "";
-    this.miniGames.games.forEach((game) => {
-      const card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML = `
-        <div>
-          <div class="title">${game.name}</div>
-        <div class="desc">${game.description}</div>
-          <div class="meta">КД: ${game.cooldown || 12} сек.</div>
-        </div>
-        <button data-mini="${game.id}">Старт</button>`;
-      this.miniContainer.appendChild(card);
-    });
-  }
+  el("orientation-btn").addEventListener("click", toggleOrientation);
+  el("auto-btn").addEventListener("click", autoPlace);
+  el("ready-btn").addEventListener("click", readyUp);
+  el("connect-btn").addEventListener("click", () => connect(false));
+  el("local-demo").addEventListener("click", () => connect(true));
+};
 
-  updateMiniButtons() {
-    this.miniContainer.querySelectorAll("[data-mini]").forEach((btn) => {
-      const id = btn.getAttribute("data-mini");
-      const remaining = this.miniGames.getCooldownRemaining(id);
-      btn.disabled = remaining > 0;
-      const label = remaining > 0 ? `${Math.ceil(remaining / 1000)}с` : "Старт";
-      btn.textContent = label;
-    });
-  }
-
-  setDragonStatus(text) {
-    document.getElementById("dragon-status").textContent = text;
-  }
-
-  setMiniStatus(text) {
-    this.miniStatus.textContent = text;
-  }
-
-  showSaveData(state) {
-    document.getElementById("save-data").value = JSON.stringify(state);
-  }
-
-  updateClickValue(value) {
-    document.getElementById("click-value").textContent = `+${value.toFixed(1)} за клик`;
-  }
-}
-
-const storage = new StorageManager(SAVE_KEY);
-const audio = new AudioManager();
-const game = new Game(audio, storage);
-const miniGames = new MiniGameManager(game);
-game.miniGames = miniGames;
-const ui = new UI(game, audio, storage, miniGames);
-miniGames.setUI(ui);
-game.addUI(ui);
-game.loop();
-
-setInterval(() => game.save(), AUTO_SAVE_INTERVAL);
+attachUI();
