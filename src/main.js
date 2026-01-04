@@ -10,10 +10,7 @@ const FLEET = [
 const el = (id) => document.getElementById(id);
 const randomId = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
 const nowTime = () => new Date().toLocaleTimeString();
-const defaultWsUrl = () => {
-  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${window.location.host}/ws`;
-};
+const defaultWsUrl = () => "wss://free.blr2.piesocket.com/v3/1?api_key=DEMOKEY&notify_self=1";
 
 const createBoard = () => {
   const grid = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(null));
@@ -753,6 +750,12 @@ const attachUI = () => {
   el("connect-btn").addEventListener("click", () => connect(false));
   el("local-demo").addEventListener("click", () => connect(true));
   el("share-btn").addEventListener("click", copyShareLink);
+  el("demo-ws").addEventListener("click", () => {
+    el("ws-url").value = defaultWsUrl();
+    const wsRadio = document.querySelector('input[name="link-mode"][value="ws"]');
+    if (wsRadio) wsRadio.checked = true;
+    log("Вставлен demo WebSocket. Нажмите «Быстрое подключение», чтобы проверить мультиплеер.");
+  });
 };
 
 attachUI();
