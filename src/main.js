@@ -115,7 +115,34 @@ class MiniGameManager {
   constructor(game, ui) {
     this.game = game;
     this.ui = ui;
+    this.cooldowns = {};
     this.games = this.buildGames();
+  }
+
+  setUI(ui) {
+    this.ui = ui;
+  }
+
+  getCooldownRemaining(id) {
+    const until = this.cooldowns[id] || 0;
+    return Math.max(0, until - performance.now());
+  }
+
+  startCooldown(id, seconds) {
+    this.cooldowns[id] = performance.now() + seconds * 1000;
+  }
+
+  activate(id) {
+    const game = this.games.find((g) => g.id === id);
+    if (!game) return false;
+    const remaining = this.getCooldownRemaining(id);
+    if (remaining > 0) {
+      this.ui?.setMiniStatus(`Мини-игра на перезарядке: ${Math.ceil(remaining / 1000)} сек.`);
+      return false;
+    }
+    game.activate();
+    this.startCooldown(id, game.cooldown || 12);
+    return true;
   }
 
   buildGames() {
@@ -124,29 +151,32 @@ class MiniGameManager {
         id: "burst",
         name: "Печенье-бурст",
         description: "10 секунд: клики дают в 5 раз больше печенья",
+        cooldown: 20,
         activate: () => {
           this.game.addTemporaryClickBoost(5, 10);
-          this.ui.setMiniStatus("Печенье-бурст активирован: x5 клики на 10 секунд.");
+          this.ui?.setMiniStatus("Печенье-бурст активирован: x5 клики на 10 секунд.");
         },
       },
       {
         id: "lottery",
         name: "Лотерея печенья",
         description: "Выиграй от 1% до 10% текущего запаса печенья",
+        cooldown: 25,
         activate: () => {
           const reward = this.game.cookies * (0.01 + Math.random() * 0.09);
           this.game.addCookies(reward);
-          this.ui.setMiniStatus(`Лотерея: получено ${formatNumber(reward)} печенья.`);
+          this.ui?.setMiniStatus(`Лотерея: получено ${formatNumber(reward)} печенья.`);
         },
       },
       {
         id: "time-warp",
         name: "Сдвиг времени",
         description: "Моментально добавляет 30 секунд автопроизводства",
+        cooldown: 30,
         activate: () => {
           const reward = this.game.getCps() * 30;
           this.game.addCookies(reward);
-          this.ui.setMiniStatus(`Сдвиг времени: +${formatNumber(reward)} печенья.`);
+          this.ui?.setMiniStatus(`Сдвиг времени: +${formatNumber(reward)} печенья.`);
         },
       },
     ];
@@ -624,10 +654,11 @@ class Game {
 }
 
 class UI {
-  constructor(game, audio, storage) {
+  constructor(game, audio, storage, miniGames) {
     this.game = game;
     this.audio = audio;
     this.storage = storage;
+    this.miniGames = miniGames;
     this.buildingContainer = document.getElementById("buildings");
     this.upgradeContainer = document.getElementById("upgrades");
     this.achievementContainer = document.getElementById("achievements");
@@ -658,6 +689,10 @@ class UI {
       const raw = document.getElementById("save-data").value;
       if (raw.trim()) this.game.import(raw.trim());
     });
+    document.getElementById("reset-btn").addEventListener("click", () => {
+      localStorage.removeItem(SAVE_KEY);
+      window.location.reload();
+    });
     document.getElementById("toggle-music").addEventListener("click", (e) => {
       const playing = this.audio.toggleMusic();
       e.currentTarget.textContent = `Музыка: ${playing ? "вкл" : "выкл"}`;
@@ -684,19 +719,22 @@ class UI {
     this.miniContainer.addEventListener("click", (e) => {
       const id = e.target.getAttribute("data-mini");
       if (!id) return;
-      const mini = this.game.miniGames.games.find((m) => m.id === id);
-      if (mini) mini.activate();
+      const activated = this.miniGames.activate(id);
+      if (!activated) return;
     });
   }
 
   render() {
     document.getElementById("cookie-count").textContent = formatNumber(this.game.cookies);
+    document.getElementById("lifetime-cookies").textContent = formatNumber(this.game.totalCookies);
     document.getElementById("cps").textContent = this.game.getCps().toFixed(1);
     document.getElementById("prestige").textContent = `${(this.game.prestigeBonus * 100).toFixed(1)}%`;
     document.getElementById("achievement-count").textContent = `${this.game.unlockedAchievements.size} / ${this.game.achievements.length}`;
+    document.getElementById("total-clicks").textContent = formatNumber(this.game.totalClicks);
     this.updateBuildingButtons();
     this.updateUpgradeButtons();
     this.updateDragon();
+    this.updateMiniButtons();
     const now = performance.now();
     if (
       now - this.lastAchievementUpdate > 1000 ||
@@ -788,16 +826,27 @@ class UI {
 
   renderMiniGames() {
     this.miniContainer.innerHTML = "";
-    this.game.miniGames.games.forEach((game) => {
+    this.miniGames.games.forEach((game) => {
       const card = document.createElement("div");
       card.className = "card";
       card.innerHTML = `
         <div>
           <div class="title">${game.name}</div>
         <div class="desc">${game.description}</div>
+          <div class="meta">КД: ${game.cooldown || 12} сек.</div>
         </div>
         <button data-mini="${game.id}">Старт</button>`;
       this.miniContainer.appendChild(card);
+    });
+  }
+
+  updateMiniButtons() {
+    this.miniContainer.querySelectorAll("[data-mini]").forEach((btn) => {
+      const id = btn.getAttribute("data-mini");
+      const remaining = this.miniGames.getCooldownRemaining(id);
+      btn.disabled = remaining > 0;
+      const label = remaining > 0 ? `${Math.ceil(remaining / 1000)}с` : "Старт";
+      btn.textContent = label;
     });
   }
 
@@ -821,12 +870,11 @@ class UI {
 const storage = new StorageManager(SAVE_KEY);
 const audio = new AudioManager();
 const game = new Game(audio, storage);
-game.miniGames = new MiniGameManager(game, {
-  setMiniStatus: () => {},
-});
-const ui = new UI(game, audio, storage);
+const miniGames = new MiniGameManager(game);
+game.miniGames = miniGames;
+const ui = new UI(game, audio, storage, miniGames);
+miniGames.setUI(ui);
 game.addUI(ui);
-game.miniGames.ui = ui;
 game.loop();
 
 setInterval(() => game.save(), AUTO_SAVE_INTERVAL);
