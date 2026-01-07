@@ -3,14 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Incremental Cookie Forge</title>
+  <title>Cookie Forge: Advanced</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div id="notifications" class="notifications"></div>
+  <div id="golden-layer" class="golden-layer"></div>
+
   <div class="top-bar">
     <div class="identity">
       <h1>Cookie Forge</h1>
-      <p>Incremental/Idle в стиле Cookie Clicker</p>
+      <p>Продвинутый idle-симулятор сладостей</p>
     </div>
     <div class="stats">
       <div class="stat">
@@ -42,26 +45,71 @@
       <button id="save-btn">Сохранить</button>
       <button id="export-btn">Экспорт</button>
       <button id="import-btn">Импорт</button>
-      <button id="reset-btn">Сбросить сохранение</button>
+      <button id="reset-btn">Сбросить</button>
       <button id="toggle-music">Музыка: выкл</button>
     </div>
   </div>
 
   <main class="layout">
+    <aside class="panel sidebar-panel">
+      <h2>Панель управления</h2>
+      <div class="sidebar-grid">
+        <div>
+          <div class="label">Небесные чипы</div>
+          <div class="value" id="chip-count">0</div>
+        </div>
+        <div>
+          <div class="label">Манна</div>
+          <div class="value" id="mana-count">0/0</div>
+        </div>
+        <div>
+          <div class="label">Уровень дракона</div>
+          <div class="value" id="dragon-level">0</div>
+        </div>
+      </div>
+      <div class="sidebar-actions">
+        <button id="buy-all-btn">Купить всё</button>
+        <button id="prestige-btn">Реинкарнировать</button>
+        <button id="cloud-save-btn">Облачное сохранение</button>
+        <button id="cloud-load-btn">Загрузить облако</button>
+      </div>
+      <div class="theme-panel">
+        <h3>Темы</h3>
+        <div class="theme-buttons">
+          <button data-theme="midnight">Midnight</button>
+          <button data-theme="aurora">Aurora</button>
+          <button data-theme="candy">Candy</button>
+          <button data-theme="cyber">Cyber</button>
+        </div>
+        <h3>Скины</h3>
+        <div class="theme-buttons">
+          <button data-skin="classic">Классик</button>
+          <button data-skin="robot">Robot Cursor</button>
+          <button data-skin="dragon">Dragon Grandma</button>
+        </div>
+      </div>
+    </aside>
+
     <section class="panel cookie-panel">
       <div class="cookie-wrapper">
         <button id="big-cookie" aria-label="Большое печенье"></button>
       </div>
       <div class="info-line" id="click-value">+1 за клик</div>
+      <div class="effect-panel">
+        <h3>Активные эффекты</h3>
+        <div id="active-effects" class="effect-list"></div>
+      </div>
       <div class="dragon-panel">
         <h3>Дракон</h3>
         <p id="dragon-status">Спит. Разбудите его, чтобы получить временной множитель!</p>
-        <button id="dragon-btn">Пробудить дракона</button>
+        <div class="button-row">
+          <button id="dragon-btn">Пробудить дракона</button>
+          <button id="dragon-feed">Покормить</button>
+        </div>
       </div>
-      <div class="prestige-panel">
-        <h3>Реинкарнация</h3>
-        <p>Сбросьте прогресс ради постоянных бонусов к производству.</p>
-        <button id="prestige-btn">Реинкарнировать</button>
+      <div class="spell-panel">
+        <h3>Магия</h3>
+        <div id="spells" class="list"></div>
       </div>
       <div class="mini-panel">
         <h3>Мини-игры</h3>
@@ -72,29 +120,46 @@
 
     <section class="panel store-panel">
       <div class="section-header">
-        <h2>Здания</h2>
-        <span class="helper">Автопроизводство печенья</span>
+        <h2>Арсенал</h2>
+        <span class="helper">20 зданий, синергии, улучшения и престиж</span>
       </div>
-      <div id="buildings" class="list"></div>
-
-      <div class="section-header">
-        <h2>Улучшения</h2>
-        <span class="helper">Более 600 усилений кликов и производства</span>
+      <div class="tab-bar">
+        <button class="tab-button active" data-tab="tab-buildings">Здания</button>
+        <button class="tab-button" data-tab="tab-upgrades">Улучшения</button>
+        <button class="tab-button" data-tab="tab-synergies">Синергии</button>
+        <button class="tab-button" data-tab="tab-prestige">Небеса</button>
       </div>
-      <div id="upgrades" class="list upgrades"></div>
+      <div class="tab-panel active" id="tab-buildings">
+        <div id="buildings" class="list"></div>
+      </div>
+      <div class="tab-panel" id="tab-upgrades">
+        <div id="upgrades" class="list upgrades"></div>
+      </div>
+      <div class="tab-panel" id="tab-synergies">
+        <div id="synergies" class="list"></div>
+      </div>
+      <div class="tab-panel" id="tab-prestige">
+        <div id="prestige-shop" class="list"></div>
+      </div>
     </section>
   </main>
 
   <section class="panel achievements-panel">
     <div class="section-header">
-      <h2>Достижения</h2>
-      <span class="helper">Более 500 наград за прогресс</span>
+      <h2>Достижения и хроники</h2>
+      <span class="helper">Открывайте награды и сюжетные события</span>
     </div>
     <div class="achievement-controls">
       <input id="achievement-search" type="search" placeholder="Поиск достижений" />
       <span id="achievement-progress"></span>
     </div>
-    <div id="achievements" class="achievements-grid"></div>
+    <div class="split-panel">
+      <div id="achievements" class="achievements-grid"></div>
+      <div class="story-panel">
+        <h3>Сюжетные события</h3>
+        <div id="story-log" class="story-log"></div>
+      </div>
+    </div>
   </section>
 
   <section class="panel save-panel">

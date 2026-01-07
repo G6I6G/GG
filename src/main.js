@@ -1,9 +1,11 @@
 const SAVE_KEY = "cookie-forge-save";
-const AUTO_SAVE_INTERVAL = 10000;
+const CLOUD_KEY = "cookie-forge-cloud";
+const AUTO_SAVE_INTERVAL = 30000;
 
 const formatNumber = (value) => {
-  if (value >= 1_000_000_000) return (value / 1_000_000_000).toFixed(2) + " млрд";
-  if (value >= 1_000_000) return (value / 1_000_000).toFixed(2) + " млн";
+  if (value >= 1e12) return (value / 1e12).toFixed(2) + " трлн";
+  if (value >= 1e9) return (value / 1e9).toFixed(2) + " млрд";
+  if (value >= 1e6) return (value / 1e6).toFixed(2) + " млн";
   if (value >= 1000) return (value / 1000).toFixed(1) + "k";
   return value.toFixed(0);
 };
@@ -13,6 +15,7 @@ class AudioManager {
     this.ctx = null;
     this.musicPlaying = false;
     this.musicNodes = [];
+    this.ambientNodes = [];
   }
 
   ensureContext() {
@@ -21,41 +24,93 @@ class AudioManager {
     }
   }
 
-  playClick() {
+  playTone({ freq = 220, type = "sine", duration = 0.2, gain = 0.1 }) {
     this.ensureContext();
     const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.frequency.value = 240;
-    gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
-    osc.connect(gain).connect(this.ctx.destination);
+    const gainNode = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gainNode.gain.setValueAtTime(gain, this.ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+    osc.connect(gainNode).connect(this.ctx.destination);
     osc.start();
-    osc.stop(this.ctx.currentTime + 0.15);
+    osc.stop(this.ctx.currentTime + duration);
   }
 
-  toggleMusic() {
+  playClick() {
+    this.playTone({ freq: 260, type: "triangle", duration: 0.12, gain: 0.12 });
+  }
+
+  playPurchase() {
+    this.playTone({ freq: 320, type: "sine", duration: 0.2, gain: 0.08 });
+  }
+
+  playUpgrade() {
+    this.playTone({ freq: 540, type: "triangle", duration: 0.25, gain: 0.1 });
+  }
+
+  playAchievement() {
+    this.playTone({ freq: 720, type: "sine", duration: 0.35, gain: 0.12 });
+  }
+
+  playGolden() {
+    this.playTone({ freq: 880, type: "square", duration: 0.3, gain: 0.08 });
+  }
+
+  playSpell() {
+    this.playTone({ freq: 630, type: "sine", duration: 0.3, gain: 0.1 });
+  }
+
+  playSeason() {
+    this.playTone({ freq: 420, type: "triangle", duration: 0.4, gain: 0.08 });
+  }
+
+  playEvent() {
+    this.playTone({ freq: 500, type: "sine", duration: 0.25, gain: 0.1 });
+  }
+
+  toggleMusic(progress = 0) {
     this.ensureContext();
     if (this.musicPlaying) {
       this.musicNodes.forEach((node) => node.stop());
       this.musicNodes = [];
       this.musicPlaying = false;
+      this.stopAmbient();
       return false;
     }
 
-    const base = [196, 262, 330];
+    const base = [196, 262, 330, 392];
     base.forEach((freq, index) => {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      osc.type = index === 0 ? "sine" : "triangle";
-      osc.frequency.value = freq;
+      osc.type = index % 2 === 0 ? "sine" : "triangle";
+      osc.frequency.value = freq + progress * 60;
       gain.gain.setValueAtTime(0.03 / (index + 1), this.ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.02 / (index + 1), this.ctx.currentTime + 30);
+      gain.gain.linearRampToValueAtTime(0.02 / (index + 1), this.ctx.currentTime + 20);
       osc.connect(gain).connect(this.ctx.destination);
       osc.start();
       this.musicNodes.push(osc);
     });
     this.musicPlaying = true;
+    this.startAmbient();
     return true;
+  }
+
+  startAmbient() {
+    this.stopAmbient();
+    const hum = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    hum.type = "sine";
+    hum.frequency.value = 90;
+    gain.gain.setValueAtTime(0.015, this.ctx.currentTime);
+    hum.connect(gain).connect(this.ctx.destination);
+    hum.start();
+    this.ambientNodes.push(hum);
+  }
+
+  stopAmbient() {
+    this.ambientNodes.forEach((node) => node.stop());
+    this.ambientNodes = [];
   }
 }
 
@@ -84,11 +139,12 @@ class StorageManager {
 }
 
 class Building {
-  constructor({ id, name, baseCost, baseCps }) {
+  constructor({ id, name, baseCost, baseCps, flavor }) {
     this.id = id;
     this.name = name;
     this.baseCost = baseCost;
     this.baseCps = baseCps;
+    this.flavor = flavor;
     this.count = 0;
   }
 
@@ -158,25 +214,66 @@ class MiniGameManager {
         },
       },
       {
-        id: "lottery",
-        name: "Лотерея печенья",
-        description: "Выиграй от 1% до 10% текущего запаса печенья",
-        cooldown: 25,
+        id: "garden",
+        name: "Сад",
+        description: "Вырастите сахарные ростки: +8% ко всему производству на 30 сек.",
+        cooldown: 40,
         activate: () => {
-          const reward = this.game.cookies * (0.01 + Math.random() * 0.09);
+          this.game.addActiveEffect({
+            id: "garden",
+            name: "Садовод",
+            duration: 30,
+            cpsMultiplier: 1.08,
+          });
+          this.ui?.setMiniStatus("Сад: +8% производство на 30 секунд.");
+        },
+      },
+      {
+        id: "stock",
+        name: "Биржа",
+        description: "Сделка века: получить 6% текущих печений",
+        cooldown: 35,
+        activate: () => {
+          const reward = this.game.cookies * 0.06;
           this.game.addCookies(reward);
-          this.ui?.setMiniStatus(`Лотерея: получено ${formatNumber(reward)} печенья.`);
+          this.ui?.setMiniStatus(`Биржа: прибыль ${formatNumber(reward)} печенья.`);
+        },
+      },
+      {
+        id: "pantheon",
+        name: "Пантеон",
+        description: "Вызвать богов: +10% кликов и CPS на 20 сек.",
+        cooldown: 45,
+        activate: () => {
+          this.game.addActiveEffect({
+            id: "pantheon",
+            name: "Божественное благословение",
+            duration: 20,
+            cpsMultiplier: 1.1,
+            clickMultiplier: 1.1,
+          });
+          this.ui?.setMiniStatus("Пантеон активен: +10% на 20 сек.");
         },
       },
       {
         id: "time-warp",
         name: "Сдвиг времени",
-        description: "Моментально добавляет 30 секунд автопроизводства",
+        description: "Моментально добавляет 40 секунд автопроизводства",
         cooldown: 30,
         activate: () => {
-          const reward = this.game.getCps() * 30;
+          const reward = this.game.getCps() * 40;
           this.game.addCookies(reward);
           this.ui?.setMiniStatus(`Сдвиг времени: +${formatNumber(reward)} печенья.`);
+        },
+      },
+      {
+        id: "dragon-play",
+        name: "Игры с драконом",
+        description: "Дракон активен дольше: +6 сек бонуса",
+        cooldown: 50,
+        activate: () => {
+          this.game.extendDragon(6);
+          this.ui?.setMiniStatus("Дракон ликует: бонус продлен на 6 секунд.");
         },
       },
     ];
@@ -184,36 +281,62 @@ class MiniGameManager {
 }
 
 class Game {
-  constructor(audio, storage) {
+  constructor(audio, storage, cloudStorage) {
     this.audio = audio;
     this.storage = storage;
+    this.cloudStorage = cloudStorage;
 
     this.cookies = 0;
     this.totalCookies = 0;
     this.totalClicks = 0;
     this.prestigeLevel = 0;
     this.prestigeBonus = 0;
+    this.prestigeChips = 0;
 
     this.clickMultiplier = 1;
     this.clickFlat = 0;
     this.autoMultiplier = 1;
     this.globalMultiplier = 1;
-    this.dragonBoost = 1;
-    this.dragonTimes = 0;
-    this.buildingBonuses = {};
+
+    this.baseBuildingBonuses = {};
+    this.synergyBonuses = {};
 
     this.upgrades = [];
     this.buildings = [];
     this.achievements = [];
+    this.synergies = [];
+    this.prestigeUpgrades = [];
+
     this.purchasedUpgrades = new Set();
     this.unlockedAchievements = new Set();
+    this.purchasedPrestige = new Set();
 
+    this.dragonLevel = 0;
+    this.dragonBoost = 1;
     this.dragonCooldown = 0;
     this.dragonTimer = 0;
-    this.activeClickBoost = { multiplier: 1, expires: 0 };
-    this.lastAchievementCheck = performance.now();
+    this.dragonTimes = 0;
 
+    this.activeClickBoost = { multiplier: 1, expires: 0 };
+    this.activeEffects = [];
+
+    this.mana = 100;
+    this.maxMana = 100;
+    this.spellCooldowns = {};
+
+    this.currentSeason = null;
+    this.seasonEnds = 0;
+    this.seasonBonus = 1;
+
+    this.storyLog = [];
+    this.lastStoryEvent = performance.now();
+
+    this.theme = "midnight";
+    this.skin = "classic";
+
+    this.lastAchievementCheck = performance.now();
     this.lastTick = performance.now();
+    this.goldenCookieNext = performance.now() + this.randomGoldenDelay();
 
     this.initData();
     this.load();
@@ -222,85 +345,96 @@ class Game {
   initData() {
     this.buildings = this.createBuildings();
     this.buildings.forEach((b) => {
-      this.buildingBonuses[b.id] = 1;
+      this.baseBuildingBonuses[b.id] = 1;
+      this.synergyBonuses[b.id] = 1;
     });
     this.upgrades = this.generateUpgrades();
     this.achievements = this.generateAchievements();
+    this.synergies = this.generateSynergies();
+    this.prestigeUpgrades = this.generatePrestigeUpgrades();
+    this.spells = this.generateSpells();
+    this.seasons = this.generateSeasons();
   }
 
   createBuildings() {
     return [
-      new Building({ id: "cursor", name: "Курсор", baseCost: 15, baseCps: 0.1 }),
-      new Building({ id: "grandma", name: "Бабушка", baseCost: 100, baseCps: 1 }),
-      new Building({ id: "farm", name: "Ферма", baseCost: 500, baseCps: 4 }),
-      new Building({ id: "factory", name: "Фабрика", baseCost: 3000, baseCps: 10 }),
-      new Building({ id: "mine", name: "Шахта", baseCost: 12000, baseCps: 40 }),
-      new Building({ id: "portal", name: "Портал", baseCost: 250000, baseCps: 400 }),
-      new Building({ id: "time", name: "Временная лаборатория", baseCost: 1200000, baseCps: 2000 }),
-      new Building({ id: "quantum", name: "Квантовый реактор", baseCost: 6000000, baseCps: 9000 }),
+      new Building({ id: "cursor", name: "Курсор", baseCost: 15, baseCps: 0.1, flavor: "Автокликеры с умной начинкой." }),
+      new Building({ id: "grandma", name: "Бабушка", baseCost: 100, baseCps: 1, flavor: "Теплый дух домашней выпечки." }),
+      new Building({ id: "farm", name: "Ферма", baseCost: 500, baseCps: 4, flavor: "Сахарные поля без края." }),
+      new Building({ id: "factory", name: "Фабрика", baseCost: 3000, baseCps: 10, flavor: "Конвейеры будущего." }),
+      new Building({ id: "mine", name: "Шахта", baseCost: 12000, baseCps: 40, flavor: "Добыча шоколадной руды." }),
+      new Building({ id: "bank", name: "Банк", baseCost: 55000, baseCps: 120, flavor: "Финансовые деривативы из печенья." }),
+      new Building({ id: "temple", name: "Храм", baseCost: 150000, baseCps: 360, flavor: "Ритуалы карамели." }),
+      new Building({ id: "wizard", name: "Башня мага", baseCost: 350000, baseCps: 900, flavor: "Заклинания теста." }),
+      new Building({ id: "shipment", name: "Грузчик", baseCost: 850000, baseCps: 2100, flavor: "Межзвездная доставка печенья." }),
+      new Building({ id: "alchemy", name: "Алхимическая лаборатория", baseCost: 1800000, baseCps: 4500, flavor: "Золотые смеси." }),
+      new Building({ id: "portal", name: "Портал", baseCost: 3500000, baseCps: 9000, flavor: "Печенье из других миров." }),
+      new Building({ id: "time", name: "Машина времени", baseCost: 9000000, baseCps: 18000, flavor: "Печенье до первого укуса." }),
+      new Building({ id: "antimatter", name: "Антиматерия", baseCost: 22000000, baseCps: 36000, flavor: "Анти-крошки." }),
+      new Building({ id: "prism", name: "Призма", baseCost: 52000000, baseCps: 72000, flavor: "Спектр сладости." }),
+      new Building({ id: "chancemaker", name: "Шансомёт", baseCost: 125000000, baseCps: 150000, flavor: "Удача в каждой крошке." }),
+      new Building({ id: "fractal", name: "Фрактальный двигатель", baseCost: 300000000, baseCps: 300000, flavor: "Вечное повторение." }),
+      new Building({ id: "console", name: "JS-консоль", baseCost: 700000000, baseCps: 620000, flavor: "Баги превращаются в печенье." }),
+      new Building({ id: "idleverse", name: "Айдл-Вселенная", baseCost: 1600000000, baseCps: 1200000, flavor: "Симуляции сладости." }),
+      new Building({ id: "cortex", name: "Кортикальный пекарь", baseCost: 3500000000, baseCps: 2400000, flavor: "Нейро-печенье." }),
+      new Building({ id: "starforge", name: "Звездная кузня", baseCost: 7800000000, baseCps: 5200000, flavor: "Сверхновые печенья." }),
     ];
   }
 
   generateUpgrades() {
     const upgrades = [];
-
-    // Building multipliers
     this.buildings.forEach((b) => {
-      for (let tier = 1; tier <= 80; tier++) {
-        const multiplier = 1 + (6 + tier) / 100;
+      [1.2, 1.5, 2, 2.5].forEach((multiplier, index) => {
         upgrades.push(
           new Upgrade({
-            id: `${b.id}-upgrade-${tier}`,
-            name: `${b.name}: усилитель ${tier}`,
-            description: `Увеличивает производство ${b.name} на ${(multiplier * 100 - 100).toFixed(0)}%.`,
-            cost: Math.round(b.baseCost * Math.pow(1.32, tier) * 6),
+            id: `${b.id}-upgrade-${index + 1}`,
+            name: `${b.name}: улучшение ${index + 1}`,
+            description: `Увеличивает эффективность ${b.name} на ${(multiplier * 100 - 100).toFixed(0)}%.`,
+            cost: Math.round(b.baseCost * Math.pow(12, index + 1)),
             kind: "building-mult",
             buildingId: b.id,
             multiplier,
           })
         );
-      }
+      });
     });
 
-    // Click upgrades
-    for (let i = 1; i <= 40; i++) {
+    for (let i = 1; i <= 12; i++) {
       upgrades.push(
         new Upgrade({
           id: `click-up-${i}`,
           name: `Клик-мастер ${i}`,
-          description: `Клик приносит больше: множитель +${(i * 8).toFixed(0)}% и +${i} печенья за клик.`,
-          cost: Math.round(60 * Math.pow(1.5, i)),
+          description: `Клик приносит больше: множитель +${(i * 10).toFixed(0)}% и +${i * 2} печ.`,
+          cost: Math.round(80 * Math.pow(1.7, i)),
           kind: "click-mult",
-          multiplier: 1 + i * 0.08,
-          flat: i,
+          multiplier: 1 + i * 0.1,
+          flat: i * 2,
         })
       );
     }
 
-    // Auto production upgrades
-    for (let i = 1; i <= 25; i++) {
+    for (let i = 1; i <= 10; i++) {
       upgrades.push(
         new Upgrade({
           id: `auto-up-${i}`,
           name: `Автоматизация ${i}`,
-          description: `Автопроизводство увеличено на ${(20 + i * 5).toFixed(0)}%.`,
-          cost: Math.round(500 * Math.pow(1.6, i)),
+          description: `Автопроизводство увеличено на ${(15 + i * 6).toFixed(0)}%.`,
+          cost: Math.round(800 * Math.pow(1.8, i)),
           kind: "auto-mult",
-          multiplier: 1 + (20 + i * 5) / 100,
+          multiplier: 1 + (15 + i * 6) / 100,
         })
       );
     }
 
-    // Global production upgrades
-    for (let i = 1; i <= 20; i++) {
+    for (let i = 1; i <= 10; i++) {
       upgrades.push(
         new Upgrade({
           id: `global-up-${i}`,
           name: `Священный сахар ${i}`,
-          description: `Все производство усиливается на ${(5 + i * 3).toFixed(0)}%.`,
-          cost: Math.round(2500 * Math.pow(1.7, i)),
+          description: `Все производство усиливается на ${(6 + i * 4).toFixed(0)}%.`,
+          cost: Math.round(2500 * Math.pow(1.9, i)),
           kind: "global-mult",
-          multiplier: 1 + (5 + i * 3) / 100,
+          multiplier: 1 + (6 + i * 4) / 100,
         })
       );
     }
@@ -308,10 +442,107 @@ class Game {
     return upgrades;
   }
 
-  generateAchievements() {
-    const achievements = [];
+  generateSynergies() {
+    const pairs = [
+      ["cursor", "grandma"],
+      ["grandma", "farm"],
+      ["farm", "factory"],
+      ["factory", "mine"],
+      ["mine", "bank"],
+      ["bank", "temple"],
+      ["temple", "wizard"],
+      ["wizard", "shipment"],
+      ["shipment", "alchemy"],
+      ["alchemy", "portal"],
+      ["portal", "time"],
+      ["time", "antimatter"],
+      ["antimatter", "prism"],
+      ["prism", "chancemaker"],
+      ["chancemaker", "fractal"],
+      ["fractal", "console"],
+      ["console", "idleverse"],
+      ["idleverse", "cortex"],
+      ["cortex", "starforge"],
+      ["grandma", "factory"],
+      ["farm", "bank"],
+      ["factory", "temple"],
+      ["mine", "wizard"],
+      ["bank", "shipment"],
+      ["temple", "portal"],
+      ["wizard", "time"],
+      ["shipment", "prism"],
+      ["alchemy", "chancemaker"],
+      ["portal", "fractal"],
+      ["time", "console"],
+      ["antimatter", "idleverse"],
+      ["prism", "cortex"],
+      ["chancemaker", "starforge"],
+      ["cursor", "wizard"],
+      ["grandma", "alchemy"],
+      ["farm", "time"],
+    ];
 
-    const clickThresholds = Array.from({ length: 120 }, (_, i) => 50 + i * 250);
+    return pairs.map((pair, idx) => {
+      const [a, b] = pair;
+      return {
+        id: `syn-${idx + 1}`,
+        name: `Синергия ${idx + 1}`,
+        description: `Когда есть 10 ${a} и 10 ${b}, усилить ${b} на 15%.`,
+        requirement: { a, b, count: 10 },
+        target: b,
+        multiplier: 1.15,
+        active: false,
+      };
+    });
+  }
+
+  generateAchievements() {
+    const achievements = [
+      new Achievement({
+        id: "click-100",
+        name: "100 кликов",
+        description: "Кликните по печенью 100 раз.",
+        reward: { type: "click", multiplier: 1.1 },
+        condition: (game) => game.totalClicks >= 100,
+      }),
+      new Achievement({
+        id: "click-1000",
+        name: "1000 кликов",
+        description: "Кликните по печенью 1000 раз.",
+        reward: { type: "click", multiplier: 1.15 },
+        condition: (game) => game.totalClicks >= 1000,
+      }),
+      new Achievement({
+        id: "cookies-1m",
+        name: "Миллион печений",
+        description: "Произведите 1,000,000 печений.",
+        reward: { type: "global", multiplier: 1.05 },
+        condition: (game) => game.totalCookies >= 1_000_000,
+      }),
+      new Achievement({
+        id: "cookies-100m",
+        name: "100 миллионов",
+        description: "Произведите 100,000,000 печений.",
+        reward: { type: "global", multiplier: 1.08 },
+        condition: (game) => game.totalCookies >= 100_000_000,
+      }),
+      new Achievement({
+        id: "dragon-1",
+        name: "Повелитель дракона",
+        description: "Активируйте дракона хотя бы раз.",
+        reward: { type: "cps", multiplier: 1.05 },
+        condition: (game) => game.dragonTimes > 0,
+      }),
+      new Achievement({
+        id: "prestige-1",
+        name: "Реинкарнатор",
+        description: "Совершите первую реинкарнацию.",
+        reward: { type: "global", multiplier: 1.1 },
+        condition: (game) => game.prestigeLevel > 0,
+      }),
+    ];
+
+    const clickThresholds = Array.from({ length: 24 }, (_, i) => 250 * (i + 1));
     clickThresholds.forEach((th, idx) => {
       achievements.push(
         new Achievement({
@@ -323,7 +554,7 @@ class Game {
       );
     });
 
-    const cookieThresholds = Array.from({ length: 120 }, (_, i) => Math.pow(1.25, i) * 500);
+    const cookieThresholds = Array.from({ length: 30 }, (_, i) => Math.pow(1.8, i) * 5000);
     cookieThresholds.forEach((th, idx) => {
       achievements.push(
         new Achievement({
@@ -336,7 +567,7 @@ class Game {
     });
 
     this.buildings.forEach((b) => {
-      for (let i = 1; i <= 20; i++) {
+      for (let i = 1; i <= 8; i++) {
         const need = i * 10;
         achievements.push(
           new Achievement({
@@ -352,7 +583,7 @@ class Game {
       }
     });
 
-    const upgradeThresholds = Array.from({ length: 80 }, (_, i) => (i + 1) * 5);
+    const upgradeThresholds = Array.from({ length: 20 }, (_, i) => (i + 1) * 4);
     upgradeThresholds.forEach((th, idx) => {
       achievements.push(
         new Achievement({
@@ -364,37 +595,64 @@ class Game {
       );
     });
 
-    achievements.push(
-      new Achievement({
-        id: "dragon-1",
-        name: "Повелитель дракона",
-        description: "Активируйте дракона",
-        condition: (game) => game.dragonTimes > 0,
-      })
-    );
-
-    achievements.push(
-      new Achievement({
-        id: "prestige-1",
-        name: "Реинкарнатор",
-        description: "Совершите первую реинкарнацию",
-        condition: (game) => game.prestigeLevel > 0,
-      })
-    );
-
-    while (achievements.length < 520) {
-      const idx = achievements.length + 1;
-      achievements.push(
-        new Achievement({
-          id: `meta-${idx}`,
-          name: `Коллекционер ${idx}`,
-          description: `Просто продолжайте копить печенье!`,
-          condition: (game) => game.totalCookies >= 1000 * idx,
-        })
-      );
-    }
-
     return achievements;
+  }
+
+  generatePrestigeUpgrades() {
+    return [
+      { id: "heavenly-1", name: "Небесный сахар", cost: 5, description: "Постоянно +5% к CPS", effect: { type: "global", multiplier: 1.05 } },
+      { id: "heavenly-2", name: "Серебряный клик", cost: 8, description: "+10% к кликам", effect: { type: "click", multiplier: 1.1 } },
+      { id: "heavenly-3", name: "Сладкий поток", cost: 12, description: "+8% к автопроизводству", effect: { type: "cps", multiplier: 1.08 } },
+      { id: "heavenly-4", name: "Звездная удача", cost: 20, description: "Золотые печенья появляются чаще", effect: { type: "golden", multiplier: 0.8 } },
+    ];
+  }
+
+  generateSpells() {
+    return [
+      {
+        id: "spark",
+        name: "Искра сахара",
+        cost: 20,
+        cooldown: 12,
+        description: "Усилить клики в 2 раза на 12 сек.",
+        cast: () => this.addActiveEffect({ id: "spark", name: "Искра сахара", duration: 12, clickMultiplier: 2 }),
+      },
+      {
+        id: "arcane",
+        name: "Арканическая синергия",
+        cost: 35,
+        cooldown: 25,
+        description: "Синергии сильнее на 25% в течение 20 сек.",
+        cast: () => this.addActiveEffect({ id: "arcane", name: "Арканическая синергия", duration: 20, synergyMultiplier: 1.25 }),
+      },
+      {
+        id: "meteor",
+        name: "Шоколадный метеор",
+        cost: 40,
+        cooldown: 30,
+        description: "Мгновенно получить 45 секунд CPS.",
+        cast: () => this.addCookies(this.getCps() * 45),
+      },
+      {
+        id: "chrono",
+        name: "Хроно-клик",
+        cost: 25,
+        cooldown: 20,
+        description: "+15% к CPS и кликам на 15 сек.",
+        cast: () => this.addActiveEffect({ id: "chrono", name: "Хроно-клик", duration: 15, cpsMultiplier: 1.15, clickMultiplier: 1.15 }),
+      },
+    ];
+  }
+
+  generateSeasons() {
+    return [
+      { id: "spring", name: "Весенний фестиваль", bonus: 1.06, goldenBoost: 1.1, theme: "spring" },
+      { id: "summer", name: "Летний карнавал", bonus: 1.08, goldenBoost: 1.15, theme: "summer" },
+      { id: "autumn", name: "Осенний урожай", bonus: 1.1, goldenBoost: 1.2, theme: "autumn" },
+      { id: "winter", name: "Зимняя сказка", bonus: 1.12, goldenBoost: 1.25, theme: "winter" },
+      { id: "halloween", name: "Хэллоуин", bonus: 1.09, goldenBoost: 1.3, theme: "halloween" },
+      { id: "easter", name: "Пасхальный парад", bonus: 1.07, goldenBoost: 1.2, theme: "easter" },
+    ];
   }
 
   addCookies(amount) {
@@ -404,57 +662,113 @@ class Game {
 
   clickCookie() {
     this.totalClicks += 1;
-    if (this.audio) this.audio.playClick();
+    this.audio?.playClick();
     const value = this.getClickValue();
     this.addCookies(value);
     this.checkAchievements();
-    this.ui && this.ui.updateClickValue(value);
+    this.ui?.updateClickValue(value);
+    this.ui?.spawnCookieChips();
+    this.ui?.spawnFloatingText(`+${formatNumber(value)}`);
   }
 
   getClickValue() {
     const prestigeBonus = 1 + this.prestigeBonus;
-    const base = (1 + this.clickFlat) * this.clickMultiplier * prestigeBonus * this.globalMultiplier * this.dragonBoost * this.activeClickBoost.multiplier;
+    const effectBonus = this.getEffectMultiplier("click");
+    const base =
+      (1 + this.clickFlat) *
+      this.clickMultiplier *
+      prestigeBonus *
+      this.globalMultiplier *
+      this.dragonBoost *
+      this.activeClickBoost.multiplier *
+      effectBonus;
     return base;
   }
 
   getCps() {
+    this.updateSynergies();
     let cps = 0;
     this.buildings.forEach((b) => {
-      const bonus = this.buildingBonuses[b.id] || 1;
-      cps += b.baseCps * b.count * bonus;
+      const baseBonus = this.baseBuildingBonuses[b.id] || 1;
+      const synergyBonus = this.synergyBonuses[b.id] || 1;
+      cps += b.baseCps * b.count * baseBonus * synergyBonus;
     });
     const prestigeBonus = 1 + this.prestigeBonus;
-    cps *= this.autoMultiplier * prestigeBonus * this.globalMultiplier * this.dragonBoost;
+    cps *= this.autoMultiplier * prestigeBonus * this.globalMultiplier * this.dragonBoost * this.seasonBonus;
+    cps *= this.getEffectMultiplier("cps");
     return cps;
+  }
+
+  getEffectMultiplier(type) {
+    let multiplier = 1;
+    this.activeEffects.forEach((effect) => {
+      if (type === "cps" && effect.cpsMultiplier) multiplier *= effect.cpsMultiplier;
+      if (type === "click" && effect.clickMultiplier) multiplier *= effect.clickMultiplier;
+    });
+    return multiplier;
   }
 
   buyBuilding(id) {
     const building = this.buildings.find((b) => b.id === id);
-    if (!building) return;
+    if (!building) return false;
     const cost = building.getCost();
-    if (this.cookies < cost) return;
+    if (this.cookies < cost) return false;
     this.cookies -= cost;
     building.count += 1;
     this.checkAchievements();
+    this.audio?.playPurchase();
+    return true;
+  }
+
+  buyAllBuildings() {
+    let bought = false;
+    let purchasedThisLoop = true;
+    while (purchasedThisLoop) {
+      purchasedThisLoop = false;
+      this.buildings.forEach((b) => {
+        if (this.cookies >= b.getCost()) {
+          this.cookies -= b.getCost();
+          b.count += 1;
+          purchasedThisLoop = true;
+          bought = true;
+        }
+      });
+    }
+    if (bought) this.audio?.playPurchase();
+    return bought;
   }
 
   buyUpgrade(id) {
     const upgrade = this.upgrades.find((u) => u.id === id);
-    if (!upgrade || upgrade.purchased) return;
-    if (this.cookies < upgrade.cost) return;
+    if (!upgrade || upgrade.purchased) return false;
+    if (this.cookies < upgrade.cost) return false;
     this.cookies -= upgrade.cost;
     upgrade.purchased = true;
     this.purchasedUpgrades.add(upgrade.id);
     this.applyUpgrade(upgrade);
     this.checkAchievements();
+    this.audio?.playUpgrade();
     this.ui?.renderUpgrades();
+    return true;
+  }
+
+  buyPrestigeUpgrade(id) {
+    const upgrade = this.prestigeUpgrades.find((u) => u.id === id);
+    if (!upgrade || this.purchasedPrestige.has(id)) return false;
+    if (this.prestigeChips < upgrade.cost) return false;
+    this.prestigeChips -= upgrade.cost;
+    this.purchasedPrestige.add(id);
+    this.applyReward(upgrade.effect);
+    this.ui?.renderPrestigeUpgrades();
+    this.audio?.playUpgrade();
+    return true;
   }
 
   applyUpgrade(upgrade) {
     switch (upgrade.kind) {
       case "building-mult":
-        this.buildingBonuses[upgrade.buildingId] =
-          (this.buildingBonuses[upgrade.buildingId] || 1) * (upgrade.multiplier || 1);
+        this.baseBuildingBonuses[upgrade.buildingId] =
+          (this.baseBuildingBonuses[upgrade.buildingId] || 1) * (upgrade.multiplier || 1);
         break;
       case "click-mult":
         this.clickMultiplier *= upgrade.multiplier || 1;
@@ -471,6 +785,33 @@ class Game {
     }
   }
 
+  applyReward(reward) {
+    if (!reward) return;
+    if (reward.type === "click") this.clickMultiplier *= reward.multiplier || 1;
+    if (reward.type === "global") this.globalMultiplier *= reward.multiplier || 1;
+    if (reward.type === "cps") this.autoMultiplier *= reward.multiplier || 1;
+    if (reward.type === "golden") this.goldenSpawnMultiplier = reward.multiplier || 1;
+  }
+
+  updateSynergies() {
+    const synergyMultiplier = this.getActiveSynergyMultiplier();
+    this.synergyBonuses = Object.fromEntries(this.buildings.map((b) => [b.id, 1]));
+    this.synergies.forEach((syn) => {
+      const a = this.buildings.find((b) => b.id === syn.requirement.a);
+      const b = this.buildings.find((b) => b.id === syn.requirement.b);
+      syn.active = Boolean(a && b && a.count >= syn.requirement.count && b.count >= syn.requirement.count);
+      if (syn.active) {
+        const current = this.synergyBonuses[syn.target] || 1;
+        this.synergyBonuses[syn.target] = current * syn.multiplier * synergyMultiplier;
+      }
+    });
+  }
+
+  getActiveSynergyMultiplier() {
+    const effect = this.activeEffects.find((item) => item.synergyMultiplier);
+    return effect ? effect.synergyMultiplier : 1;
+  }
+
   addTemporaryClickBoost(multiplier, seconds) {
     const now = performance.now();
     this.activeClickBoost = {
@@ -479,30 +820,107 @@ class Game {
     };
   }
 
+  addActiveEffect(effect) {
+    const now = performance.now();
+    const newEffect = {
+      ...effect,
+      expires: now + (effect.duration || 0) * 1000,
+    };
+    this.activeEffects.push(newEffect);
+    this.ui?.showNotification(`Активирован эффект: ${effect.name}`);
+  }
+
   activateDragon() {
     const now = performance.now();
     if (this.dragonCooldown > now) return false;
-    this.dragonCooldown = now + 40000;
-    this.dragonTimer = now + 20000;
-    this.dragonBoost = 3;
-    this.dragonTimes = (this.dragonTimes || 0) + 1;
-    setTimeout(() => {
-      this.dragonBoost = 1;
-    }, 20000);
+    const duration = 18 + this.dragonLevel * 2;
+    this.dragonCooldown = now + 45000;
+    this.dragonTimer = now + duration * 1000;
+    this.dragonBoost = 2.5 + this.dragonLevel * 0.3;
+    this.dragonTimes += 1;
+    this.audio?.playEvent();
+    this.ui?.showNotification("Дракон пробудился!");
     return true;
   }
 
+  extendDragon(extraSeconds) {
+    if (this.dragonTimer > performance.now()) {
+      this.dragonTimer += extraSeconds * 1000;
+    }
+  }
+
+  feedDragon() {
+    const cost = 5000 * Math.pow(2.2, this.dragonLevel);
+    if (this.cookies < cost) return false;
+    this.cookies -= cost;
+    this.dragonLevel += 1;
+    this.ui?.showNotification(`Дракон накормлен. Уровень ${this.dragonLevel}.`);
+    return true;
+  }
+
+  castSpell(id) {
+    const spell = this.spells.find((s) => s.id === id);
+    if (!spell) return false;
+    const remaining = this.spellCooldowns[id] || 0;
+    if (remaining > performance.now()) return false;
+    if (this.mana < spell.cost) return false;
+    this.mana -= spell.cost;
+    spell.cast();
+    this.spellCooldowns[id] = performance.now() + spell.cooldown * 1000;
+    this.audio?.playSpell();
+    this.ui?.renderSpells();
+    return true;
+  }
+
+  triggerSeason(season) {
+    this.currentSeason = season;
+    this.seasonBonus = season.bonus;
+    this.seasonEnds = performance.now() + 120000;
+    this.ui?.applySeasonTheme(season.theme);
+    this.audio?.playSeason();
+    this.ui?.showNotification(`Сезон начался: ${season.name}`);
+  }
+
+  randomSeason() {
+    const season = this.seasons[Math.floor(Math.random() * this.seasons.length)];
+    this.triggerSeason(season);
+  }
+
+  randomGoldenDelay() {
+    const base = 25000 + Math.random() * 25000;
+    const boost = this.goldenSpawnMultiplier || 1;
+    return base * boost;
+  }
+
+  grantGoldenCookie() {
+    const effects = [
+      { id: "frenzy", name: "Френзи", cpsMultiplier: 7, duration: 25 },
+      { id: "click-frenzy", name: "Клик-френзи", clickMultiplier: 10, duration: 12 },
+    ];
+    const roll = Math.random();
+    if (roll < 0.33) {
+      const reward = this.getCps() * (20 + Math.random() * 30);
+      this.addCookies(reward);
+      this.ui?.showNotification(`Счастливчик! +${formatNumber(reward)} печенья.`);
+      this.ui?.spawnFloatingText(`+${formatNumber(reward)}`);
+      return;
+    }
+    const effect = effects[Math.floor(Math.random() * effects.length)];
+    this.addActiveEffect(effect);
+  }
+
   prestige() {
-    const bonus = Math.floor(Math.sqrt(this.totalCookies) / 1000);
+    const bonus = Math.floor(Math.sqrt(this.totalCookies) / 5000);
     if (bonus <= 0) return false;
     this.prestigeLevel += 1;
     this.prestigeBonus += bonus / 100;
+    this.prestigeChips += bonus;
 
-    // reset run
     this.cookies = 0;
     this.totalClicks = 0;
     this.buildings.forEach((b) => (b.count = 0));
-    this.buildingBonuses = Object.fromEntries(this.buildings.map((b) => [b.id, 1]));
+    this.baseBuildingBonuses = Object.fromEntries(this.buildings.map((b) => [b.id, 1]));
+    this.synergyBonuses = Object.fromEntries(this.buildings.map((b) => [b.id, 1]));
 
     this.clickMultiplier = 1;
     this.clickFlat = 0;
@@ -510,10 +928,20 @@ class Game {
     this.globalMultiplier = 1;
     this.dragonBoost = 1;
     this.activeClickBoost = { multiplier: 1, expires: 0 };
+    this.activeEffects = [];
 
     this.upgrades.forEach((u) => (u.purchased = false));
     this.purchasedUpgrades.clear();
+    this.unlockedAchievements.clear();
+    this.achievements.forEach((a) => (a.unlocked = false));
+
+    this.purchasedPrestige.forEach((id) => {
+      const upgrade = this.prestigeUpgrades.find((u) => u.id === id);
+      if (upgrade) this.applyReward(upgrade.effect);
+    });
+
     this.save();
+    this.ui?.showNotification("Реинкарнация завершена. Потенциал возрос!");
     return true;
   }
 
@@ -523,6 +951,9 @@ class Game {
       if (ach.condition(this)) {
         this.unlockedAchievements.add(ach.id);
         ach.unlocked = true;
+        this.applyReward(ach.reward);
+        this.audio?.playAchievement();
+        this.ui?.showNotification(`Достижение: ${ach.name}`);
       }
     });
   }
@@ -539,13 +970,13 @@ class Game {
     this.totalClicks = data.totalClicks || 0;
     this.prestigeLevel = data.prestigeLevel || 0;
     this.prestigeBonus = data.prestigeBonus || 0;
-    this.clickMultiplier = data.clickMultiplier || 1;
-    this.clickFlat = data.clickFlat || 0;
-    this.autoMultiplier = data.autoMultiplier || 1;
-    this.globalMultiplier = data.globalMultiplier || 1;
-    this.dragonBoost = data.dragonBoost || 1;
-    this.buildingBonuses = data.buildingBonuses || this.buildingBonuses;
+    this.prestigeChips = data.prestigeChips || 0;
+    this.dragonLevel = data.dragonLevel || 0;
     this.dragonTimes = data.dragonTimes || 0;
+    this.theme = data.theme || this.theme;
+    this.skin = data.skin || this.skin;
+
+    this.resetMultipliers();
 
     if (Array.isArray(data.buildings)) {
       data.buildings.forEach((save) => {
@@ -569,11 +1000,31 @@ class Game {
       data.achievements.forEach((id) => {
         this.unlockedAchievements.add(id);
         const ach = this.achievements.find((a) => a.id === id);
-        if (ach) ach.unlocked = true;
+        if (ach) {
+          ach.unlocked = true;
+          this.applyReward(ach.reward);
+        }
+      });
+    }
+
+    if (Array.isArray(data.prestigeUpgrades)) {
+      data.prestigeUpgrades.forEach((id) => {
+        this.purchasedPrestige.add(id);
+        const upgrade = this.prestigeUpgrades.find((u) => u.id === id);
+        if (upgrade) this.applyReward(upgrade.effect);
       });
     }
 
     this.checkAchievements();
+  }
+
+  resetMultipliers() {
+    this.clickMultiplier = 1;
+    this.clickFlat = 0;
+    this.autoMultiplier = 1;
+    this.globalMultiplier = 1;
+    this.baseBuildingBonuses = Object.fromEntries(this.buildings.map((b) => [b.id, 1]));
+    this.synergyBonuses = Object.fromEntries(this.buildings.map((b) => [b.id, 1]));
   }
 
   save() {
@@ -583,16 +1034,15 @@ class Game {
       totalClicks: this.totalClicks,
       prestigeLevel: this.prestigeLevel,
       prestigeBonus: this.prestigeBonus,
-      clickMultiplier: this.clickMultiplier,
-      clickFlat: this.clickFlat,
-      autoMultiplier: this.autoMultiplier,
-      globalMultiplier: this.globalMultiplier,
-      dragonBoost: this.dragonBoost,
-      buildingBonuses: this.buildingBonuses,
+      prestigeChips: this.prestigeChips,
+      dragonLevel: this.dragonLevel,
       dragonTimes: this.dragonTimes || 0,
       buildings: this.buildings.map((b) => ({ id: b.id, count: b.count })),
       upgrades: this.upgrades.map((u) => ({ id: u.id, purchased: u.purchased })),
       achievements: Array.from(this.unlockedAchievements),
+      prestigeUpgrades: Array.from(this.purchasedPrestige),
+      theme: this.theme,
+      skin: this.skin,
     };
     this.storage.save(state);
     if (this.ui) {
@@ -607,16 +1057,15 @@ class Game {
       totalClicks: this.totalClicks,
       prestigeLevel: this.prestigeLevel,
       prestigeBonus: this.prestigeBonus,
-      clickMultiplier: this.clickMultiplier,
-      clickFlat: this.clickFlat,
-      autoMultiplier: this.autoMultiplier,
-      globalMultiplier: this.globalMultiplier,
-      dragonBoost: this.dragonBoost,
-      buildingBonuses: this.buildingBonuses,
+      prestigeChips: this.prestigeChips,
+      dragonLevel: this.dragonLevel,
       dragonTimes: this.dragonTimes || 0,
       buildings: this.buildings.map((b) => ({ id: b.id, count: b.count })),
       upgrades: this.upgrades.map((u) => ({ id: u.id, purchased: u.purchased })),
       achievements: Array.from(this.unlockedAchievements),
+      prestigeUpgrades: Array.from(this.purchasedPrestige),
+      theme: this.theme,
+      skin: this.skin,
     };
     return JSON.stringify(state);
   }
@@ -643,39 +1092,98 @@ class Game {
       this.activeClickBoost = { multiplier: 1, expires: 0 };
     }
 
+    this.activeEffects = this.activeEffects.filter((effect) => now <= effect.expires);
+
+    if (this.dragonTimer && now > this.dragonTimer) {
+      this.dragonBoost = 1;
+      this.dragonTimer = 0;
+    }
+
+    if (this.seasonEnds && now > this.seasonEnds) {
+      this.currentSeason = null;
+      this.seasonBonus = 1;
+      this.ui?.applySeasonTheme(null);
+    }
+
+    if (this.mana < this.maxMana) {
+      this.mana = Math.min(this.maxMana, this.mana + delta * 6);
+    }
+
     if (now - this.lastAchievementCheck > 1000) {
       this.checkAchievements();
       this.lastAchievementCheck = now;
     }
 
+    if (now > this.goldenCookieNext) {
+      this.ui?.spawnGoldenCookie();
+      this.goldenCookieNext = now + this.randomGoldenDelay();
+    }
+
+    if (now - this.lastStoryEvent > 90000) {
+      this.triggerStoryEvent();
+      this.lastStoryEvent = now;
+    }
+
+    if (!this.currentSeason && now % 240000 < 1000) {
+      this.randomSeason();
+    }
+
     if (this.ui) this.ui.render();
     requestAnimationFrame(() => this.loop());
+  }
+
+  triggerStoryEvent() {
+    const events = [
+      { name: "Охота за магическим печеньем", reward: () => this.addCookies(this.getCps() * 20) },
+      { name: "Экспедиция за реликвиями", reward: () => this.addActiveEffect({ id: "relic", name: "Реликвии", duration: 20, cpsMultiplier: 1.12 }) },
+      { name: "Тайный рецепт", reward: () => this.addTemporaryClickBoost(3, 12) },
+    ];
+    const event = events[Math.floor(Math.random() * events.length)];
+    event.reward();
+    this.storyLog.unshift(`${event.name}`);
+    if (this.storyLog.length > 5) this.storyLog.pop();
+    this.ui?.showNotification(`Сюжетное событие: ${event.name}`);
+    this.audio?.playEvent();
   }
 }
 
 class UI {
-  constructor(game, audio, storage, miniGames) {
+  constructor(game, audio, storage, miniGames, cloudStorage) {
     this.game = game;
     this.audio = audio;
     this.storage = storage;
+    this.cloudStorage = cloudStorage;
     this.miniGames = miniGames;
     this.buildingContainer = document.getElementById("buildings");
     this.upgradeContainer = document.getElementById("upgrades");
+    this.synergyContainer = document.getElementById("synergies");
     this.achievementContainer = document.getElementById("achievements");
     this.achievementSearch = document.getElementById("achievement-search");
     this.achievementProgress = document.getElementById("achievement-progress");
     this.miniContainer = document.getElementById("mini-games");
     this.miniStatus = document.getElementById("mini-status");
+    this.spellContainer = document.getElementById("spells");
+    this.prestigeContainer = document.getElementById("prestige-shop");
+    this.activeEffectsContainer = document.getElementById("active-effects");
+    this.notificationContainer = document.getElementById("notifications");
+    this.storyContainer = document.getElementById("story-log");
+    this.goldenWrapper = document.getElementById("golden-layer");
     this.lastAchievementUpdate = 0;
     this.lastAchievementCount = 0;
 
     this.bindEvents();
     this.renderBuildings();
     this.renderUpgrades();
+    this.renderSynergies();
     this.renderAchievements();
     this.renderMiniGames();
+    this.renderSpells();
+    this.renderPrestigeUpgrades();
+    this.renderStory();
     this.lastAchievementCount = this.game.unlockedAchievements.size;
     this.lastAchievementUpdate = performance.now();
+    this.applyTheme();
+    this.applySkin();
   }
 
   bindEvents() {
@@ -694,33 +1202,88 @@ class UI {
       window.location.reload();
     });
     document.getElementById("toggle-music").addEventListener("click", (e) => {
-      const playing = this.audio.toggleMusic();
+      const progress = Math.min(1, this.game.prestigeLevel / 10);
+      const playing = this.audio.toggleMusic(progress);
       e.currentTarget.textContent = `Музыка: ${playing ? "вкл" : "выкл"}`;
     });
     document.getElementById("dragon-btn").addEventListener("click", () => {
       if (this.game.activateDragon()) {
-        this.setDragonStatus("Дракон бодрствует и множит производство x3 на 20 сек!");
+        this.setDragonStatus("Дракон бодрствует и множит производство!");
+      }
+    });
+    document.getElementById("dragon-feed").addEventListener("click", () => {
+      if (this.game.feedDragon()) {
+        this.setDragonStatus("Дракон доволен и стал сильнее!");
       }
     });
     document.getElementById("prestige-btn").addEventListener("click", () => {
-      if (this.game.prestige()) {
-        this.setDragonStatus("Реинкарнация завершена. Постоянный бонус усилен!");
+      this.game.prestige();
+    });
+    document.getElementById("buy-all-btn").addEventListener("click", () => this.game.buyAllBuildings());
+    document.getElementById("cloud-save-btn").addEventListener("click", () => {
+      this.cloudStorage.save(JSON.parse(this.game.export()));
+      this.showNotification("Прогресс сохранен в облаке.");
+    });
+    document.getElementById("cloud-load-btn").addEventListener("click", () => {
+      const data = this.cloudStorage.load();
+      if (data) {
+        this.storage.save(data);
+        window.location.reload();
+      } else {
+        this.showNotification("Облачное сохранение не найдено.");
       }
     });
+
     this.achievementSearch.addEventListener("input", () => this.renderAchievements());
+
     this.buildingContainer.addEventListener("click", (e) => {
       const id = e.target.getAttribute("data-buy");
-      if (id) this.game.buyBuilding(id);
+      if (id) {
+        const success = this.game.buyBuilding(id);
+        if (success) this.animatePurchase(e.target.closest(".card"));
+      }
     });
     this.upgradeContainer.addEventListener("click", (e) => {
       const id = e.target.getAttribute("data-up");
-      if (id) this.game.buyUpgrade(id);
+      if (id) {
+        const success = this.game.buyUpgrade(id);
+        if (success) this.animateUpgrade(e.target.closest(".card"));
+      }
+    });
+    this.spellContainer.addEventListener("click", (e) => {
+      const id = e.target.getAttribute("data-spell");
+      if (id) {
+        this.game.castSpell(id);
+      }
+    });
+    this.prestigeContainer.addEventListener("click", (e) => {
+      const id = e.target.getAttribute("data-prestige");
+      if (id) {
+        this.game.buyPrestigeUpgrade(id);
+      }
     });
     this.miniContainer.addEventListener("click", (e) => {
       const id = e.target.getAttribute("data-mini");
       if (!id) return;
-      const activated = this.miniGames.activate(id);
-      if (!activated) return;
+      this.miniGames.activate(id);
+    });
+
+    document.querySelectorAll(".tab-button").forEach((btn) => {
+      btn.addEventListener("click", () => this.switchTab(btn.dataset.tab));
+    });
+
+    document.querySelectorAll("[data-theme]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.game.theme = btn.dataset.theme;
+        this.applyTheme();
+      });
+    });
+
+    document.querySelectorAll("[data-skin]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.game.skin = btn.dataset.skin;
+        this.applySkin();
+      });
     });
   }
 
@@ -731,10 +1294,18 @@ class UI {
     document.getElementById("prestige").textContent = `${(this.game.prestigeBonus * 100).toFixed(1)}%`;
     document.getElementById("achievement-count").textContent = `${this.game.unlockedAchievements.size} / ${this.game.achievements.length}`;
     document.getElementById("total-clicks").textContent = formatNumber(this.game.totalClicks);
+    document.getElementById("chip-count").textContent = `${this.game.prestigeChips}`;
+    document.getElementById("mana-count").textContent = `${Math.floor(this.game.mana)}/${this.game.maxMana}`;
+    document.getElementById("dragon-level").textContent = `${this.game.dragonLevel}`;
     this.updateBuildingButtons();
     this.updateUpgradeButtons();
+    this.updateSynergies();
     this.updateDragon();
     this.updateMiniButtons();
+    this.renderActiveEffects();
+    this.renderSpells();
+    this.renderStory();
+
     const now = performance.now();
     if (
       now - this.lastAchievementUpdate > 1000 ||
@@ -754,6 +1325,7 @@ class UI {
       card.innerHTML = `
         <div>
           <div class="title">${b.name}</div>
+          <div class="desc">${b.flavor}</div>
           <div class="desc">Производит ${b.baseCps} печ./сек. Сейчас: ${b.count}</div>
           <div class="meta">Стоимость: <span data-cost="${b.id}">${formatNumber(b.getCost())}</span></div>
         </div>
@@ -764,7 +1336,7 @@ class UI {
 
   renderUpgrades() {
     this.upgradeContainer.innerHTML = "";
-    const available = this.game.upgrades.filter((u) => !u.purchased).sort((a, b) => a.cost - b.cost).slice(0, 50);
+    const available = this.game.upgrades.filter((u) => !u.purchased).sort((a, b) => a.cost - b.cost).slice(0, 60);
     available.forEach((u) => {
       const card = document.createElement("div");
       card.className = "card";
@@ -779,13 +1351,38 @@ class UI {
     });
   }
 
+  renderSynergies() {
+    this.synergyContainer.innerHTML = "";
+    this.game.synergies.forEach((syn) => {
+      const card = document.createElement("div");
+      card.className = "card synergy";
+      card.innerHTML = `
+        <div>
+          <div class="title">${syn.name}</div>
+          <div class="desc">${syn.description}</div>
+          <div class="meta">Цель: ${syn.target}</div>
+        </div>
+        <span class="pill">${syn.active ? "Активно" : "Нужно"}</span>`;
+      this.synergyContainer.appendChild(card);
+    });
+  }
+
+  updateSynergies() {
+    this.synergyContainer.querySelectorAll(".pill").forEach((pill, idx) => {
+      const syn = this.game.synergies[idx];
+      if (!syn) return;
+      pill.textContent = syn.active ? "Активно" : "Нужно";
+      pill.classList.toggle("active", syn.active);
+    });
+  }
+
   updateBuildingButtons() {
     this.game.buildings.forEach((b) => {
       const costEl = this.buildingContainer.querySelector(`[data-cost="${b.id}"]`);
       const btn = this.buildingContainer.querySelector(`[data-buy="${b.id}"]`);
       if (costEl) costEl.textContent = formatNumber(b.getCost());
       if (btn) btn.disabled = this.game.cookies < b.getCost();
-      const desc = btn?.previousElementSibling?.querySelector(".desc");
+      const desc = btn?.previousElementSibling?.querySelectorAll(".desc")[1];
       if (desc) desc.textContent = `Производит ${b.baseCps} печ./сек. Сейчас: ${b.count}`;
     });
   }
@@ -796,15 +1393,6 @@ class UI {
       const upgrade = this.game.upgrades.find((u) => u.id === id);
       if (upgrade) btn.disabled = this.game.cookies < upgrade.cost;
     });
-  }
-
-  updateDragon() {
-    const now = performance.now();
-    const ready = this.game.dragonCooldown < now;
-    const status = ready
-      ? "Дракон отдыхает и готов к активации."
-      : `Перезарядка: ${Math.ceil((this.game.dragonCooldown - now) / 1000)} сек.`;
-    this.setDragonStatus(status);
   }
 
   renderAchievements() {
@@ -832,7 +1420,7 @@ class UI {
       card.innerHTML = `
         <div>
           <div class="title">${game.name}</div>
-        <div class="desc">${game.description}</div>
+          <div class="desc">${game.description}</div>
           <div class="meta">КД: ${game.cooldown || 12} сек.</div>
         </div>
         <button data-mini="${game.id}">Старт</button>`;
@@ -850,6 +1438,88 @@ class UI {
     });
   }
 
+  renderSpells() {
+    this.spellContainer.innerHTML = "";
+    this.game.spells.forEach((spell) => {
+      const remaining = this.game.spellCooldowns[spell.id] || 0;
+      const cooldown = Math.max(0, remaining - performance.now());
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div>
+          <div class="title">${spell.name}</div>
+          <div class="desc">${spell.description}</div>
+          <div class="meta">Манна: ${spell.cost} | КД: ${Math.ceil(cooldown / 1000)}с</div>
+        </div>
+        <button data-spell="${spell.id}">Колдовать</button>`;
+      const btn = card.querySelector("button");
+      btn.disabled = this.game.mana < spell.cost || cooldown > 0;
+      this.spellContainer.appendChild(card);
+    });
+  }
+
+  renderPrestigeUpgrades() {
+    this.prestigeContainer.innerHTML = "";
+    this.game.prestigeUpgrades.forEach((upgrade) => {
+      const purchased = this.game.purchasedPrestige.has(upgrade.id);
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div>
+          <div class="title">${upgrade.name}</div>
+          <div class="desc">${upgrade.description}</div>
+          <div class="meta">Цена: ${upgrade.cost} чипов</div>
+        </div>
+        <button data-prestige="${upgrade.id}">${purchased ? "Куплено" : "Купить"}</button>`;
+      const btn = card.querySelector("button");
+      btn.disabled = purchased || this.game.prestigeChips < upgrade.cost;
+      this.prestigeContainer.appendChild(card);
+    });
+  }
+
+  renderActiveEffects() {
+    this.activeEffectsContainer.innerHTML = "";
+    if (this.game.activeEffects.length === 0 && this.game.currentSeason) {
+      const seasonItem = document.createElement("div");
+      seasonItem.className = "effect";
+      seasonItem.textContent = `${this.game.currentSeason.name} (сезон)`;
+      this.activeEffectsContainer.appendChild(seasonItem);
+      return;
+    }
+    this.game.activeEffects.forEach((effect) => {
+      const remaining = Math.max(0, Math.ceil((effect.expires - performance.now()) / 1000));
+      const item = document.createElement("div");
+      item.className = "effect";
+      item.textContent = `${effect.name} · ${remaining}с`;
+      this.activeEffectsContainer.appendChild(item);
+    });
+    if (this.game.currentSeason) {
+      const seasonItem = document.createElement("div");
+      seasonItem.className = "effect";
+      seasonItem.textContent = `${this.game.currentSeason.name} (сезон)`;
+      this.activeEffectsContainer.appendChild(seasonItem);
+    }
+  }
+
+  renderStory() {
+    this.storyContainer.innerHTML = "";
+    this.game.storyLog.forEach((entry) => {
+      const item = document.createElement("div");
+      item.className = "story-item";
+      item.textContent = entry;
+      this.storyContainer.appendChild(item);
+    });
+  }
+
+  updateDragon() {
+    const now = performance.now();
+    const ready = this.game.dragonCooldown < now;
+    const status = ready
+      ? "Дракон отдыхает и готов к активации."
+      : `Перезарядка: ${Math.ceil((this.game.dragonCooldown - now) / 1000)} сек.`;
+    this.setDragonStatus(status);
+  }
+
   setDragonStatus(text) {
     document.getElementById("dragon-status").textContent = text;
   }
@@ -865,15 +1535,114 @@ class UI {
   updateClickValue(value) {
     document.getElementById("click-value").textContent = `+${value.toFixed(1)} за клик`;
   }
+
+  showNotification(text) {
+    const item = document.createElement("div");
+    item.className = "notification";
+    item.textContent = text;
+    this.notificationContainer.appendChild(item);
+    setTimeout(() => {
+      item.classList.add("fade");
+    }, 2600);
+    setTimeout(() => item.remove(), 3200);
+  }
+
+  spawnFloatingText(text) {
+    const item = document.createElement("div");
+    item.className = "floating-text";
+    item.textContent = text;
+    item.style.left = `${40 + Math.random() * 20}%`;
+    item.style.top = `${50 + Math.random() * 10}%`;
+    document.body.appendChild(item);
+    setTimeout(() => item.remove(), 1400);
+  }
+
+  spawnCookieChips() {
+    const cookie = document.getElementById("big-cookie");
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.style.left = `${40 + Math.random() * 40}%`;
+    chip.style.top = `${40 + Math.random() * 40}%`;
+    cookie.appendChild(chip);
+    setTimeout(() => chip.remove(), 900);
+  }
+
+  spawnGoldenCookie() {
+    if (!this.goldenWrapper || this.goldenWrapper.querySelector(".golden-cookie")) return;
+    const golden = document.createElement("button");
+    golden.className = "golden-cookie";
+    const edge = Math.floor(Math.random() * 4);
+    const x = edge === 0 ? -200 : edge === 1 ? window.innerWidth + 200 : Math.random() * window.innerWidth;
+    const y = edge === 2 ? -200 : edge === 3 ? window.innerHeight + 200 : Math.random() * window.innerHeight;
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+    golden.style.setProperty("--from-x", `${x - centerX}px`);
+    golden.style.setProperty("--from-y", `${y - centerY}px`);
+    golden.addEventListener("click", () => {
+      this.game.grantGoldenCookie();
+      this.audio?.playGolden();
+      this.spawnGoldenBurst(golden);
+      golden.remove();
+    });
+    this.goldenWrapper.appendChild(golden);
+    setTimeout(() => golden.remove(), 12000);
+  }
+
+  spawnGoldenBurst(origin) {
+    for (let i = 0; i < 8; i++) {
+      const particle = document.createElement("span");
+      particle.className = "cookie-particle";
+      particle.style.left = origin.offsetLeft + 40 + "px";
+      particle.style.top = origin.offsetTop + 40 + "px";
+      particle.style.setProperty("--dx", `${-40 + Math.random() * 80}px`);
+      particle.style.setProperty("--dy", `${-40 + Math.random() * 80}px`);
+      this.goldenWrapper.appendChild(particle);
+      setTimeout(() => particle.remove(), 1000);
+    }
+  }
+
+  animatePurchase(card) {
+    if (!card) return;
+    card.classList.add("pop");
+    setTimeout(() => card.classList.remove("pop"), 400);
+  }
+
+  animateUpgrade(card) {
+    if (!card) return;
+    card.classList.add("glow");
+    setTimeout(() => card.classList.remove("glow"), 600);
+  }
+
+  switchTab(tab) {
+    document.querySelectorAll(".tab-button").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.tab === tab);
+    });
+    document.querySelectorAll(".tab-panel").forEach((panel) => {
+      panel.classList.toggle("active", panel.id === tab);
+    });
+  }
+
+  applyTheme() {
+    document.body.dataset.theme = this.game.theme;
+  }
+
+  applySkin() {
+    document.getElementById("big-cookie").dataset.skin = this.game.skin;
+  }
+
+  applySeasonTheme(theme) {
+    document.body.dataset.season = theme || "";
+  }
 }
 
 const storage = new StorageManager(SAVE_KEY);
+const cloudStorage = new StorageManager(CLOUD_KEY);
 const audio = new AudioManager();
-const game = new Game(audio, storage);
+const game = new Game(audio, storage, cloudStorage);
 const miniGames = new MiniGameManager(game);
-game.miniGames = miniGames;
-const ui = new UI(game, audio, storage, miniGames);
+const ui = new UI(game, audio, storage, miniGames, cloudStorage);
 miniGames.setUI(ui);
+ui.miniGames = miniGames;
 game.addUI(ui);
 game.loop();
 
