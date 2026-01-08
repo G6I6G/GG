@@ -51,6 +51,24 @@ body[data-season="halloween"] {
     var(--bg);
 }
 
+body[data-progress="village"] {
+  background: radial-gradient(circle at 20% 15%, rgba(125, 211, 252, 0.08), transparent 35%),
+    radial-gradient(circle at 80% 25%, rgba(74, 222, 128, 0.08), transparent 30%),
+    var(--bg);
+}
+
+body[data-progress="factory"] {
+  background: radial-gradient(circle at 30% 20%, rgba(245, 165, 36, 0.12), transparent 35%),
+    radial-gradient(circle at 80% 35%, rgba(226, 232, 240, 0.08), transparent 35%),
+    var(--bg);
+}
+
+body[data-progress="cosmic"] {
+  background: radial-gradient(circle at 25% 20%, rgba(168, 85, 247, 0.14), transparent 40%),
+    radial-gradient(circle at 70% 30%, rgba(14, 165, 233, 0.12), transparent 38%),
+    var(--bg);
+}
+
 .notifications {
   position: fixed;
   top: 1rem;
@@ -406,6 +424,11 @@ button:disabled {
 
 .card.glow {
   box-shadow: 0 0 25px rgba(125, 211, 252, 0.35);
+}
+
+.card.locked {
+  opacity: 0.6;
+  filter: grayscale(0.4);
 }
 
 .card.synergy .pill {

@@ -191,6 +191,10 @@ class MiniGameManager {
   activate(id) {
     const game = this.games.find((g) => g.id === id);
     if (!game) return false;
+    if (game.requirement && !game.requirement()) {
+      this.ui?.setMiniStatus("Мини-игра еще не разблокирована.");
+      return false;
+    }
     const remaining = this.getCooldownRemaining(id);
     if (remaining > 0) {
       this.ui?.setMiniStatus(`Мини-игра на перезарядке: ${Math.ceil(remaining / 1000)} сек.`);
@@ -207,6 +211,7 @@ class MiniGameManager {
         id: "burst",
         name: "Печенье-бурст",
         description: "10 секунд: клики дают в 5 раз больше печенья",
+        requirement: () => this.game.totalClicks >= 50,
         cooldown: 20,
         activate: () => {
           this.game.addTemporaryClickBoost(5, 10);
@@ -217,6 +222,7 @@ class MiniGameManager {
         id: "garden",
         name: "Сад",
         description: "Вырастите сахарные ростки: +8% ко всему производству на 30 сек.",
+        requirement: () => this.game.getBuildingCount("farm") >= 5,
         cooldown: 40,
         activate: () => {
           this.game.addActiveEffect({
@@ -232,6 +238,7 @@ class MiniGameManager {
         id: "stock",
         name: "Биржа",
         description: "Сделка века: получить 6% текущих печений",
+        requirement: () => this.game.getBuildingCount("bank") >= 3,
         cooldown: 35,
         activate: () => {
           const reward = this.game.cookies * 0.06;
@@ -243,6 +250,7 @@ class MiniGameManager {
         id: "pantheon",
         name: "Пантеон",
         description: "Вызвать богов: +10% кликов и CPS на 20 сек.",
+        requirement: () => this.game.getBuildingCount("temple") >= 3,
         cooldown: 45,
         activate: () => {
           this.game.addActiveEffect({
@@ -259,6 +267,7 @@ class MiniGameManager {
         id: "time-warp",
         name: "Сдвиг времени",
         description: "Моментально добавляет 40 секунд автопроизводства",
+        requirement: () => this.game.getBuildingCount("time") >= 1,
         cooldown: 30,
         activate: () => {
           const reward = this.game.getCps() * 40;
@@ -270,6 +279,7 @@ class MiniGameManager {
         id: "dragon-play",
         name: "Игры с драконом",
         description: "Дракон активен дольше: +6 сек бонуса",
+        requirement: () => this.game.dragonLevel >= 1,
         cooldown: 50,
         activate: () => {
           this.game.extendDragon(6);
@@ -336,6 +346,7 @@ class Game {
 
     this.lastAchievementCheck = performance.now();
     this.lastTick = performance.now();
+    this.goldenSpawnMultiplier = 1;
     this.goldenCookieNext = performance.now() + this.randomGoldenDelay();
 
     this.initData();
@@ -379,6 +390,11 @@ class Game {
       new Building({ id: "cortex", name: "Кортикальный пекарь", baseCost: 3500000000, baseCps: 2400000, flavor: "Нейро-печенье." }),
       new Building({ id: "starforge", name: "Звездная кузня", baseCost: 7800000000, baseCps: 5200000, flavor: "Сверхновые печенья." }),
     ];
+  }
+
+  getBuildingCount(id) {
+    const building = this.buildings.find((b) => b.id === id);
+    return building ? building.count : 0;
   }
 
   generateUpgrades() {
@@ -443,6 +459,7 @@ class Game {
   }
 
   generateSynergies() {
+    const buildingMap = Object.fromEntries(this.buildings.map((b) => [b.id, b.name]));
     const pairs = [
       ["cursor", "grandma"],
       ["grandma", "farm"],
@@ -484,12 +501,15 @@ class Game {
 
     return pairs.map((pair, idx) => {
       const [a, b] = pair;
+      const nameA = buildingMap[a] || a;
+      const nameB = buildingMap[b] || b;
       return {
         id: `syn-${idx + 1}`,
         name: `Синергия ${idx + 1}`,
-        description: `Когда есть 10 ${a} и 10 ${b}, усилить ${b} на 15%.`,
+        description: `Когда есть 10 «${nameA}» и 10 «${nameB}», усилить «${nameB}» на 15%.`,
         requirement: { a, b, count: 10 },
         target: b,
+        targetName: nameB,
         multiplier: 1.15,
         active: false,
       };
@@ -615,6 +635,7 @@ class Game {
         cost: 20,
         cooldown: 12,
         description: "Усилить клики в 2 раза на 12 сек.",
+        requirement: () => this.getBuildingCount("wizard") >= 1,
         cast: () => this.addActiveEffect({ id: "spark", name: "Искра сахара", duration: 12, clickMultiplier: 2 }),
       },
       {
@@ -623,6 +644,7 @@ class Game {
         cost: 35,
         cooldown: 25,
         description: "Синергии сильнее на 25% в течение 20 сек.",
+        requirement: () => this.getBuildingCount("temple") >= 3,
         cast: () => this.addActiveEffect({ id: "arcane", name: "Арканическая синергия", duration: 20, synergyMultiplier: 1.25 }),
       },
       {
@@ -631,6 +653,7 @@ class Game {
         cost: 40,
         cooldown: 30,
         description: "Мгновенно получить 45 секунд CPS.",
+        requirement: () => this.totalCookies >= 50000,
         cast: () => this.addCookies(this.getCps() * 45),
       },
       {
@@ -639,6 +662,7 @@ class Game {
         cost: 25,
         cooldown: 20,
         description: "+15% к CPS и кликам на 15 сек.",
+        requirement: () => this.getBuildingCount("time") >= 1,
         cast: () => this.addActiveEffect({ id: "chrono", name: "Хроно-клик", duration: 15, cpsMultiplier: 1.15, clickMultiplier: 1.15 }),
       },
     ];
@@ -861,6 +885,10 @@ class Game {
   castSpell(id) {
     const spell = this.spells.find((s) => s.id === id);
     if (!spell) return false;
+    if (spell.requirement && !spell.requirement()) {
+      this.ui?.showNotification("Заклинание пока недоступно.");
+      return false;
+    }
     const remaining = this.spellCooldowns[id] || 0;
     if (remaining > performance.now()) return false;
     if (this.mana < spell.cost) return false;
@@ -889,7 +917,8 @@ class Game {
   randomGoldenDelay() {
     const base = 25000 + Math.random() * 25000;
     const boost = this.goldenSpawnMultiplier || 1;
-    return base * boost;
+    const seasonBoost = this.currentSeason?.goldenBoost || 1;
+    return (base * boost) / seasonBoost;
   }
 
   grantGoldenCookie() {
@@ -1297,6 +1326,7 @@ class UI {
     document.getElementById("chip-count").textContent = `${this.game.prestigeChips}`;
     document.getElementById("mana-count").textContent = `${Math.floor(this.game.mana)}/${this.game.maxMana}`;
     document.getElementById("dragon-level").textContent = `${this.game.dragonLevel}`;
+    this.updateProgressVisuals();
     this.updateBuildingButtons();
     this.updateUpgradeButtons();
     this.updateSynergies();
@@ -1360,7 +1390,7 @@ class UI {
         <div>
           <div class="title">${syn.name}</div>
           <div class="desc">${syn.description}</div>
-          <div class="meta">Цель: ${syn.target}</div>
+          <div class="meta">Цель: ${syn.targetName || syn.target}</div>
         </div>
         <span class="pill">${syn.active ? "Активно" : "Нужно"}</span>`;
       this.synergyContainer.appendChild(card);
@@ -1415,15 +1445,18 @@ class UI {
   renderMiniGames() {
     this.miniContainer.innerHTML = "";
     this.miniGames.games.forEach((game) => {
+      const unlocked = game.requirement ? game.requirement() : true;
       const card = document.createElement("div");
-      card.className = "card";
+      card.className = `card${unlocked ? "" : " locked"}`;
       card.innerHTML = `
         <div>
           <div class="title">${game.name}</div>
           <div class="desc">${game.description}</div>
-          <div class="meta">КД: ${game.cooldown || 12} сек.</div>
+          <div class="meta">${unlocked ? `КД: ${game.cooldown || 12} сек.` : "Требуется прогресс"}</div>
         </div>
         <button data-mini="${game.id}">Старт</button>`;
+      const btn = card.querySelector("button");
+      btn.disabled = !unlocked;
       this.miniContainer.appendChild(card);
     });
   }
@@ -1432,8 +1465,10 @@ class UI {
     this.miniContainer.querySelectorAll("[data-mini]").forEach((btn) => {
       const id = btn.getAttribute("data-mini");
       const remaining = this.miniGames.getCooldownRemaining(id);
-      btn.disabled = remaining > 0;
-      const label = remaining > 0 ? `${Math.ceil(remaining / 1000)}с` : "Старт";
+      const game = this.miniGames.games.find((item) => item.id === id);
+      const unlocked = game?.requirement ? game.requirement() : true;
+      btn.disabled = !unlocked || remaining > 0;
+      const label = !unlocked ? "Закрыто" : remaining > 0 ? `${Math.ceil(remaining / 1000)}с` : "Старт";
       btn.textContent = label;
     });
   }
@@ -1443,17 +1478,18 @@ class UI {
     this.game.spells.forEach((spell) => {
       const remaining = this.game.spellCooldowns[spell.id] || 0;
       const cooldown = Math.max(0, remaining - performance.now());
+      const unlocked = spell.requirement ? spell.requirement() : true;
       const card = document.createElement("div");
-      card.className = "card";
+      card.className = `card${unlocked ? "" : " locked"}`;
       card.innerHTML = `
         <div>
           <div class="title">${spell.name}</div>
           <div class="desc">${spell.description}</div>
-          <div class="meta">Манна: ${spell.cost} | КД: ${Math.ceil(cooldown / 1000)}с</div>
+          <div class="meta">${unlocked ? `Манна: ${spell.cost} | КД: ${Math.ceil(cooldown / 1000)}с` : "Требуется разблокировка"}</div>
         </div>
         <button data-spell="${spell.id}">Колдовать</button>`;
       const btn = card.querySelector("button");
-      btn.disabled = this.game.mana < spell.cost || cooldown > 0;
+      btn.disabled = !unlocked || this.game.mana < spell.cost || cooldown > 0;
       this.spellContainer.appendChild(card);
     });
   }
@@ -1585,6 +1621,7 @@ class UI {
       golden.remove();
     });
     this.goldenWrapper.appendChild(golden);
+    this.showNotification("Появилось золотое печенье!");
     setTimeout(() => golden.remove(), 12000);
   }
 
@@ -1620,6 +1657,15 @@ class UI {
     document.querySelectorAll(".tab-panel").forEach((panel) => {
       panel.classList.toggle("active", panel.id === tab);
     });
+  }
+
+  updateProgressVisuals() {
+    const total = this.game.totalCookies;
+    let stage = "dawn";
+    if (total >= 1e7) stage = "cosmic";
+    else if (total >= 1e5) stage = "factory";
+    else if (total >= 1e3) stage = "village";
+    document.body.dataset.progress = stage;
   }
 
   applyTheme() {
