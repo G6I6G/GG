@@ -357,6 +357,7 @@ class Game {
     this.goldenSpawnMultiplier = 1;
     this.goldenCookieNext = performance.now() + this.randomGoldenDelay();
     this.buyMultiplier = 1;
+    this.offlineEarnings = 0;
 
     this.initData();
     this.load();
@@ -1004,6 +1005,8 @@ class Game {
   load() {
     const data = this.storage.load();
     if (!data) return;
+    const now = Date.now();
+    const lastSaved = data.lastSaved || now;
     this.cookies = data.cookies || 0;
     this.totalCookies = data.totalCookies || 0;
     this.totalClicks = data.totalClicks || 0;
@@ -1054,6 +1057,13 @@ class Game {
       });
     }
 
+    const offlineSeconds = Math.max(0, Math.min(8 * 60 * 60, (now - lastSaved) / 1000));
+    if (offlineSeconds >= 5) {
+      const reward = this.getCps() * offlineSeconds;
+      this.addCookies(reward);
+      this.offlineEarnings = reward;
+    }
+
     this.checkAchievements();
   }
 
@@ -1082,6 +1092,7 @@ class Game {
       prestigeUpgrades: Array.from(this.purchasedPrestige),
       theme: this.theme,
       skin: this.skin,
+      lastSaved: Date.now(),
     };
     this.storage.save(state);
     if (this.ui) {
@@ -1105,6 +1116,7 @@ class Game {
       prestigeUpgrades: Array.from(this.purchasedPrestige),
       theme: this.theme,
       skin: this.skin,
+      lastSaved: Date.now(),
     };
     return JSON.stringify(state);
   }
@@ -1224,6 +1236,10 @@ class UI {
     this.applyTheme();
     this.applySkin();
     this.setBuyMode(this.game.buyMultiplier);
+    if (this.game.offlineEarnings > 0) {
+      this.showNotification(`Оффлайн доход: +${formatNumber(this.game.offlineEarnings)} печенья.`);
+      this.game.offlineEarnings = 0;
+    }
   }
 
   bindEvents() {
