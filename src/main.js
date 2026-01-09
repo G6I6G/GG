@@ -151,6 +151,14 @@ class Building {
   getCost() {
     return Math.round(this.baseCost * Math.pow(1.15, this.count));
   }
+
+  getBulkCost(amount) {
+    let total = 0;
+    for (let i = 0; i < amount; i += 1) {
+      total += Math.round(this.baseCost * Math.pow(1.15, this.count + i));
+    }
+    return total;
+  }
 }
 
 class Upgrade {
@@ -348,6 +356,7 @@ class Game {
     this.lastTick = performance.now();
     this.goldenSpawnMultiplier = 1;
     this.goldenCookieNext = performance.now() + this.randomGoldenDelay();
+    this.buyMultiplier = 1;
 
     this.initData();
     this.load();
@@ -735,10 +744,11 @@ class Game {
   buyBuilding(id) {
     const building = this.buildings.find((b) => b.id === id);
     if (!building) return false;
-    const cost = building.getCost();
+    const amount = this.buyMultiplier || 1;
+    const cost = building.getBulkCost(amount);
     if (this.cookies < cost) return false;
     this.cookies -= cost;
-    building.count += 1;
+    building.count += amount;
     this.checkAchievements();
     this.audio?.playPurchase();
     return true;
@@ -1213,6 +1223,7 @@ class UI {
     this.lastAchievementUpdate = performance.now();
     this.applyTheme();
     this.applySkin();
+    this.setBuyMode(this.game.buyMultiplier);
   }
 
   bindEvents() {
@@ -1301,6 +1312,12 @@ class UI {
       btn.addEventListener("click", () => this.switchTab(btn.dataset.tab));
     });
 
+    document.querySelectorAll("[data-buy-mode]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.setBuyMode(Number(btn.dataset.buyMode || 1));
+      });
+    });
+
     document.querySelectorAll("[data-theme]").forEach((btn) => {
       btn.addEventListener("click", () => {
         this.game.theme = btn.dataset.theme;
@@ -1314,6 +1331,14 @@ class UI {
         this.applySkin();
       });
     });
+  }
+
+  setBuyMode(multiplier) {
+    this.game.buyMultiplier = multiplier;
+    document.querySelectorAll("[data-buy-mode]").forEach((btn) => {
+      btn.classList.toggle("active", Number(btn.dataset.buyMode) === multiplier);
+    });
+    this.updateBuildingButtons();
   }
 
   render() {
@@ -1357,7 +1382,7 @@ class UI {
           <div class="title">${b.name}</div>
           <div class="desc">${b.flavor}</div>
           <div class="desc">Производит ${b.baseCps} печ./сек. Сейчас: ${b.count}</div>
-          <div class="meta">Стоимость: <span data-cost="${b.id}">${formatNumber(b.getCost())}</span></div>
+          <div class="meta"><span data-cost-label="${b.id}">Стоимость (x${this.game.buyMultiplier})</span>: <span data-cost="${b.id}">${formatNumber(b.getCost())}</span></div>
         </div>
         <button data-buy="${b.id}">Купить</button>`;
       this.buildingContainer.appendChild(card);
@@ -1409,9 +1434,12 @@ class UI {
   updateBuildingButtons() {
     this.game.buildings.forEach((b) => {
       const costEl = this.buildingContainer.querySelector(`[data-cost="${b.id}"]`);
+      const labelEl = this.buildingContainer.querySelector(`[data-cost-label="${b.id}"]`);
       const btn = this.buildingContainer.querySelector(`[data-buy="${b.id}"]`);
-      if (costEl) costEl.textContent = formatNumber(b.getCost());
-      if (btn) btn.disabled = this.game.cookies < b.getCost();
+      const bulkCost = b.getBulkCost(this.game.buyMultiplier || 1);
+      if (costEl) costEl.textContent = formatNumber(bulkCost);
+      if (labelEl) labelEl.textContent = `Стоимость (x${this.game.buyMultiplier})`;
+      if (btn) btn.disabled = this.game.cookies < bulkCost;
       const desc = btn?.previousElementSibling?.querySelectorAll(".desc")[1];
       if (desc) desc.textContent = `Производит ${b.baseCps} печ./сек. Сейчас: ${b.count}`;
     });

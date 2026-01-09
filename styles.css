@@ -1,16 +1,16 @@
 :root {
-  --bg: #f4f6fb;
+  --bg: #fbf7f0;
   --panel: #ffffff;
   --panel-strong: #ffffff;
-  --accent: #2563eb;
-  --accent-2: #0ea5e9;
-  --text: #0f172a;
-  --muted: #64748b;
+  --accent: #b45309;
+  --accent-2: #f59e0b;
+  --text: #3f2a1b;
+  --muted: #7c6f62;
   --success: #16a34a;
   --danger: #ef4444;
-  --glow: rgba(37, 99, 235, 0.35);
-  --border: rgba(148, 163, 184, 0.3);
-  --shadow: 0 24px 48px rgba(15, 23, 42, 0.12);
+  --glow: rgba(180, 83, 9, 0.35);
+  --border: rgba(148, 126, 101, 0.25);
+  --shadow: 0 24px 48px rgba(120, 72, 33, 0.16);
 }
 
 * {
@@ -19,9 +19,9 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at 15% 12%, rgba(37, 99, 235, 0.18), transparent 38%),
-    radial-gradient(circle at 85% 10%, rgba(14, 165, 233, 0.2), transparent 38%),
-    radial-gradient(circle at 50% 90%, rgba(148, 163, 184, 0.25), transparent 45%),
+  background: radial-gradient(circle at 15% 12%, rgba(245, 158, 11, 0.22), transparent 38%),
+    radial-gradient(circle at 85% 10%, rgba(251, 146, 60, 0.2), transparent 38%),
+    radial-gradient(circle at 50% 90%, rgba(148, 126, 101, 0.25), transparent 45%),
     var(--bg);
   color: var(--text);
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -29,21 +29,21 @@ body {
 }
 
 body[data-theme="aurora"] {
-  --bg: #eef6ff;
-  --accent: #0ea5e9;
-  --accent-2: #7c3aed;
+  --bg: #f6faf4;
+  --accent: #16a34a;
+  --accent-2: #84cc16;
 }
 
 body[data-theme="candy"] {
-  --bg: #fff1f2;
-  --accent: #f43f5e;
-  --accent-2: #fb7185;
+  --bg: #fff4f1;
+  --accent: #ea580c;
+  --accent-2: #f97316;
 }
 
 body[data-theme="cyber"] {
-  --bg: #f0f9ff;
-  --accent: #0284c7;
-  --accent-2: #38bdf8;
+  --bg: #f3f0ff;
+  --accent: #7c3aed;
+  --accent-2: #a855f7;
 }
 
 body[data-season="winter"] {
@@ -348,6 +348,27 @@ button:disabled {
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.4rem;
   margin-bottom: 0.6rem;
+}
+
+.buy-modes {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0;
+}
+
+.mode-button {
+  background: #ffffff;
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  padding: 0.4rem 0.75rem;
+}
+
+.mode-button.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #ffffff;
+  border-color: transparent;
 }
 
 .helper {
